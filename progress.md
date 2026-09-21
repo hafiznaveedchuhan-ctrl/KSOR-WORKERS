@@ -409,3 +409,85 @@ on a query containing an email — detected, anonymized to `[EMAIL]`,
 answered correctly; `router_agent` on a simple question — `gpt-4o-mini`
 selected; on a deliberately multi-step comparative question —
 `gpt-4o` selected.
+
+## 2026-09-21 (continued) — Strict audit, ruthless not a self-report
+
+User asked for a strict, evidence-driven audit against everything built
+this session, across both repos, including the widget/UI, scored out of
+100 and driven to a genuine 100 — not inflated, not assumed from memory of
+earlier runs in this same conversation. All 3 local services (site,
+`ksor serve`, this API) had been stopped since the last session ended, so
+every live claim below was re-proven fresh.
+
+**Honest limitation stated up front, not hidden:** no real browser
+automation tool is actually connected this session (checked via tool
+search — only `WebFetch` exists, and it explicitly cannot reach
+`localhost`). The widget was verified as rigorously as possible without
+one: the *actual rendered SSR HTML* from a live `curl` of the homepage
+(not just the component source), a live `OPTIONS` *and* `POST` CORS
+round-trip matching exactly what the browser would send, and a
+line-by-line check that the rendered button carries this codebase's own
+real tokens (`bg-primary text-primary-foreground`, `--radius`-driven
+`rounded-full`, `motion-safe:` animations) rather than invented ones. That
+is strong wiring-and-rendering evidence; it is not the same as watching it
+render and clicking it, and the audit says so rather than claiming full
+marks it can't back up.
+
+**Two real, reproducible bugs found via fresh live testing (not present
+in — or not caught by — the earlier verification passes):**
+
+1. **`refund_agent` fabricated a citation URL.** Asked "What happens to
+   my commission if a customer returns a product?", it appended "For more
+   details, you can refer to the [refund policy](https://www.amazon.com)"
+   — **3 times out of 3**, deterministically. Checked `refund-policy.md`
+   directly: no such URL appears anywhere in it; the document's only
+   citation is the Associates Operating Agreement URL. This is a genuine
+   grounding violation the project's whole design exists to prevent, and
+   it slipped past every earlier test because none of them happened to
+   trigger this specific closing-sentence pattern. **Fixed**: added
+   "never include a URL unless it appears verbatim in the retrieved
+   content" to `refund_agent.py`'s instructions and to the shared
+   `common.INSTRUCTIONS` (so `/ask` and the other agents reusing it are
+   covered too). Re-verified clean, 3/3, after a restart.
+2. **Abstention wording inconsistency.** Of 4 fresh repeats of the
+   previously-fixed "cricket world cup" case, 3 gave the clean scope
+   abstention, but 1 said "I'm unable to access the information... at the
+   moment" — technically still a correct non-answer (no fabricated fact,
+   no refund misfire), but phrased like a temporary outage rather than a
+   permanent scope boundary, which is a materially different signal to a
+   real user. **Fixed**: `common.INSTRUCTIONS` now names the exact
+   wording to use and explicitly forbids "unable to access"/"at the
+   moment" phrasing. Re-verified 4/4 identical and correct after the fix.
+
+**One real documentation gap found:** `README.md` — the first thing
+anyone reads — still described only the original 2-worker CLI demo. No
+mention of `/refund`, `refund_agent.py`, `eval_agent.py`,
+`policy_agent.py`, or `router_agent.py` anywhere, despite all five being
+fully built, tested, and previously documented in `spec.md`/`CLAUDE.md`/
+ADRs. Also had a stray leftover `# KSOR-WORKERS` heading dangling at the
+very end (a merge artifact from the GitHub-initialized README). **Fixed**:
+`README.md` fully rewritten — all three endpoints and all three CLI
+agents documented with real examples, the "real bugs" section rewritten
+to include this pass's two findings with evidence, stray heading removed.
+
+**Everything else the audit checked came back clean, with fresh evidence,
+no fix needed:**
+- Full 19-case regression battery + the 2 new adversarial cases, re-run
+  live after the fixes — all pass.
+- `refund_agent` memory re-confirmed across turns, post-fix.
+- `eval_agent`, `policy_agent`, `router_agent` each re-tested live —
+  correct groundedness verdicts (including the earlier abstention-is-
+  GROUNDED fix holding), correct PII detection/anonymization, correct
+  model routing.
+- `git log -p --all` grepped for secret patterns across this repo's
+  *entire* history (not just the working tree) — clean. `.env` confirmed
+  never committed at any point in history, in either repo.
+- CORS confirmed live to genuinely reject an untrusted origin (no
+  `access-control-allow-origin` header at all) — not a disguised
+  wildcard.
+- Both repos' CI green on current `HEAD`, checked live via the GitHub
+  API; both working trees clean; `handbook` confirmed free of the old
+  `ksor-worker` copy.
+- All 3 new `handbook` knowledge documents re-confirmed live-readable and
+  correctly top-ranked in a fresh MCP search — not assumed from the
+  earlier ingest-bug fix.

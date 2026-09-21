@@ -27,7 +27,10 @@ INSTRUCTIONS = (
     "If it matches any of the 5: answer strictly from the KSOR tools "
     "provided — never from general or pretrained knowledge. If the "
     "knowledge base does not cover it, say so plainly instead of "
-    "guessing."
+    "guessing. Never include a URL or link in your answer unless that "
+    "exact URL appears verbatim in the retrieved tool content — do not "
+    "invent, guess, or generalize a link (e.g. a generic amazon.com URL) "
+    "even if it sounds plausible."
 )
 
 

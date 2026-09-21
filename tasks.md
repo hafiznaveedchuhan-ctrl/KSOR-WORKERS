@@ -79,3 +79,19 @@
 | 58 | docs updated: spec.md, CLAUDE.md, tasks.md, progress.md               | done |
 | 59 | Verified all 3 new agents end-to-end (eval, policy anonymization, router simple/complex) | done |
 | 60 | Commit + push                                                          | done |
+
+## Strict audit → genuine 100/100 (this pass)
+
+| # | Task                                                                   | Status |
+|---|----------------------------------------------------------------------|--------|
+| 61 | Fresh live re-test of all 19+ regression cases (both repos)           | done |
+| 62 | **Bug found**: `refund_agent` fabricated a citation URL (`https://www.amazon.com`) not present in any source, reproducible 3/3 | done |
+| 63 | **Fix**: explicit "never invent a URL" instruction added to `refund_agent.py` and shared `common.INSTRUCTIONS`; re-verified clean 3/3 | done |
+| 64 | **Bug found**: 1/4 abstention answers phrased as a temporary access problem ("unable to access... at the moment") instead of a clean scope boundary | done |
+| 65 | **Fix**: `common.INSTRUCTIONS` now specifies exact abstention wording and forbids "unable to access"/"at the moment" phrasing; re-verified 4/4 consistent | done |
+| 66 | **Gap found**: `README.md` never mentioned `refund_agent`/`eval_agent`/`policy_agent`/`router_agent` at all, plus a stray leftover `# KSOR-WORKERS` heading at the end | done |
+| 67 | **Fix**: `README.md` fully rewritten — all 6 agents documented, the 3 real bugs section rewritten with evidence, stray heading removed | done |
+| 68 | Security audit: `git log -p --all` grepped for secret patterns in both repos — clean; `.env` never committed in either repo's full history | done |
+| 69 | CORS audit: confirmed live that an untrusted origin gets no `access-control-allow-origin` header (not a wildcard) | done |
+| 70 | Full regression battery + memory + eval/policy/router re-verified live after both fixes — all pass | done |
+| 71 | Commit + push this pass                                                | pending |
