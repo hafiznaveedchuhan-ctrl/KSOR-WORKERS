@@ -153,3 +153,4 @@ Start with `CLAUDE.md`, then `spec.md`, `plan.md`, and
 `docs/adr/001-use-openai-agents-sdk.md` + `docs/adr/002-fastapi-harness.md`
 for the full design reasoning; `tasks.md` and `progress.md` track what's
 been built and verified.
+# KSOR-WORKERS
