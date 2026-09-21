@@ -1,17 +1,31 @@
 import time
+import uuid
 
 from agents import AgentsException
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from mcp.shared.exceptions import MCPError
 
+from ksor_worker.common import ALLOWED_ORIGINS, REFUND_DECLINE_MESSAGE, is_refund_related
 from ksor_worker.compare import run_ungrounded
-from ksor_worker.models import AskRequest, AskResponse
+from ksor_worker.models import AskRequest, AskResponse, RefundRequest, RefundResponse
+from ksor_worker.refund_agent import run_refund_agent
 from ksor_worker.worker import run_grounded
 
 load_dotenv()
 
 app = FastAPI(title="KSOR Worker")
+
+# Needed only for /refund: the site widget calls this API directly from the
+# browser (system/site is a static export with no live server of its own to
+# proxy through — see docs/adr/003-refund-agent-memory.md).
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["POST"],
+    allow_headers=["content-type"],
+)
 
 
 @app.get("/health")
@@ -22,6 +36,16 @@ async def health() -> dict[str, str]:
 @app.post("/ask", response_model=AskResponse)
 async def ask(request: AskRequest) -> AskResponse:
     start = time.perf_counter()
+    # Deterministic backstop, checked before the agent runs at all — see
+    # the comment on REFUND_KEYWORDS in common.py for why this exists
+    # alongside (not instead of) the prompt instruction.
+    if is_refund_related(request.query):
+        return AskResponse(
+            query=request.query,
+            answer=REFUND_DECLINE_MESSAGE,
+            worker_type="grounded",
+            latency_ms=(time.perf_counter() - start) * 1000,
+        )
     try:
         answer = await run_grounded(request.query)
     except (MCPError, AgentsException) as exc:
@@ -61,5 +85,28 @@ async def compare(request: AskRequest) -> AskResponse:
         query=request.query,
         answer=answer,
         worker_type="ungrounded",
+        latency_ms=latency_ms,
+    )
+
+
+@app.post("/refund", response_model=RefundResponse)
+async def refund(request: RefundRequest) -> RefundResponse:
+    session_id = request.session_id or str(uuid.uuid4())
+    start = time.perf_counter()
+    try:
+        answer = await run_refund_agent(request.query, session_id)
+    except (MCPError, AgentsException) as exc:
+        raise HTTPException(
+            status_code=502, detail=f"KSOR MCP server unavailable: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Refund agent failed: {exc}"
+        ) from exc
+    latency_ms = (time.perf_counter() - start) * 1000
+    return RefundResponse(
+        query=request.query,
+        answer=answer,
+        session_id=session_id,
         latency_ms=latency_ms,
     )

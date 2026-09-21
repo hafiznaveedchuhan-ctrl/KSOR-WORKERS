@@ -1,38 +1,78 @@
 # Spec — ksor-worker
 
 ## Goal
-A FastAPI harness around two agents: one grounded and scoped to the
-Ibrahim Digital Solutions Amazon affiliate KSoR via MCP, one a general,
-unrestricted Amazon affiliate assistant with no tools and no scope limit.
-`POST /ask` and `POST /compare` answer the same question through each, so
-the gap between a grounded and an ungrounded answer is visible in one HTTP
-call each. This is the foundation for a later deploy to Vercel+Render or
-Azure Container Apps — not built yet, on purpose (see Non-goals).
+A FastAPI harness around three agents, each scoped to its own domain of the
+Ibrahim Digital Solutions Amazon affiliate KSoR: a general grounded worker
+(`/ask`), an unrestricted ungrounded assistant for contrast (`/compare`),
+and a refund/returns specialist with real conversation memory (`/refund`).
+This is the foundation for a later deploy to Vercel+Render or Azure
+Container Apps — not built yet, on purpose (see Non-goals).
 
 ## Components
 - `src/ksor_worker/common.py` — shared: `MODEL`, `MCP_URL`,
-  `MCP_TIMEOUT_SECONDS`, and `INSTRUCTIONS` (the grounded worker's
-  KSOR-scoped prompt only).
+  `MCP_TIMEOUT_SECONDS`, `ALLOWED_ORIGINS`, `INSTRUCTIONS` (worker.py's
+  KSOR-scoped prompt, including its refund carve-out), and the
+  `is_refund_related()` keyword check + `REFUND_DECLINE_MESSAGE` constant
+  that backstop that carve-out (see "The refund/general domain split"
+  below).
 - `src/ksor_worker/models.py` — the API's Pydantic contract: `AskRequest`,
-  `AskResponse`.
+  `AskResponse`, `RefundRequest`, `RefundResponse`.
 - `src/ksor_worker/worker.py` — `async def run_grounded(query: str) -> str`.
 - `src/ksor_worker/compare.py` — `async def run_ungrounded(query: str) -> str`,
   its own local, unrestricted `INSTRUCTIONS`.
+- `src/ksor_worker/refund_agent.py` — `async def run_refund_agent(query:
+str, session_id: str) -> str`, its own local `INSTRUCTIONS` restricting it
+  to refunds/returns/cancellations, with real multi-turn memory via the
+  SDK's `SQLiteSession`.
 - `main.py` (project root) — the FastAPI app: `GET /health`, `POST /ask`,
-  `POST /compare`.
+  `POST /compare`, `POST /refund`.
 
 ## Model
-`gpt-4o-mini` for both workers, imported from `common.py` — kept identical so
-the model itself is never a variable in the comparison.
+`gpt-4o-mini` for all three agents, imported from `common.py` — kept
+identical so the model itself is never a variable in any comparison.
 
-## System prompts (two, by design)
+## System prompts (three, by design)
 - **worker.py** (`common.INSTRUCTIONS`): casts the agent as the Amazon
   affiliate assistant for Ibrahim Digital Solutions, instructed to answer
   only from the KSOR knowledge base and to say plainly when a question falls
-  outside it rather than guessing.
+  outside it rather than guessing — **and to decline refund/return/
+  cancellation questions**, redirecting to the refund assistant instead.
 - **compare.py** (its own local `INSTRUCTIONS`): a general Amazon affiliate
   marketing assistant with no scope restriction and no knowledge-base
-  reference — free to answer from its own training knowledge.
+  reference — free to answer from its own training knowledge. Unchanged by
+  the refund work.
+- **refund_agent.py** (its own local `INSTRUCTIONS`): answers only
+  refund/return/cancellation questions (and their direct effects — commission
+  reversal, the holding period, return windows) from the KSOR knowledge
+  base; declines everything else the KSOR covers, even topics like product
+  hunting or reviews.
+
+## The refund/general domain split — and a real reliability finding
+
+worker.py and refund_agent.py are meant to partition the KSOR's content by
+topic through their prompts alone (MCP's `search` tool has no per-agent
+category filter to enforce this with server-side). **Prompt-only
+enforcement of worker.py's refund carve-out was tested and found
+unreliable**: with a plainly refund-worded question ("If a customer
+returns a product, what happens to my commission?"), worker.py answered it
+directly — using the newly-added `refund-policy.md` content — on 3 out of 3
+repeated calls, despite an explicit, front-loaded instruction not to. A
+later attempt with a more specific instruction and `temperature=0`
+*improved* consistency but did not fully fix it, and separately introduced
+the opposite failure on an unrelated question (see `progress.md` for the
+full sequence).
+
+**Fix**: a deterministic keyword check, `is_refund_related()` in
+`common.py`, runs in `main.py`'s `/ask` handler **before the agent runs at
+all** — a keyword hit short-circuits straight to `REFUND_DECLINE_MESSAGE`
+with no model call. The prompt instruction stays as a second layer, for
+refund-adjacent phrasing (like "how long until my commission is final?")
+that doesn't contain an obvious keyword — the refund agent's *own* fuzzy
+in-domain detection (the reverse direction: recognizing an in-domain
+question that doesn't say "refund") was tested and found to work reliably
+through the prompt alone, so no code-level backstop was needed there.
+`temperature=0` was kept on both agents regardless, since a lower-variance
+classifier is a reasonable default even with the keyword backstop in place.
 
 ## HTTP API (`main.py`)
 
@@ -62,6 +102,25 @@ Errors:
 ### `POST /compare` — ungrounded
 Same request/response shape, `"worker_type": "ungrounded"`. No MCP
 dependency, so this only fails on `500` (e.g. a bad `OPENAI_API_KEY`).
+
+### `POST /refund` — refund/returns specialist, with memory
+Request (`RefundRequest`): `{"query": "<question>", "session_id":
+"<optional>"}`
+Response (`RefundResponse`, `200`):
+```json
+{
+  "query": "...",
+  "answer": "...",
+  "worker_type": "refund",
+  "session_id": "...",
+  "latency_ms": 1234.5
+}
+```
+`session_id` is minted with `uuid4()` if the caller omits it, and always
+comes back in the response — send the same `session_id` on the next call
+to continue the same conversation; the SDK's `SQLiteSession` (keyed by that
+id, in `refund_sessions.db`) automatically carries prior turns forward.
+Same `502`/`500` error shape as `/ask`.
 
 ## MCP connection
 

@@ -11,3 +11,8 @@ wheels/
 
 # Secrets
 .env
+
+# Runtime state (refund agent's conversation memory)
+*.db
+*.db-shm
+*.db-wal

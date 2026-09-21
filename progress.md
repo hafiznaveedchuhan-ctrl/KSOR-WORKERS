@@ -175,3 +175,100 @@ working against the real KSOR MCP server, not just against mocks.
 
 **Remaining:** push to the new standalone `ksor-worker` GitHub repo once the
 user creates it and shares the URL, then confirm its CI goes green there.
+
+## 2026-09-21 — 3 knowledge docs + refund agent + a real prompt-reliability bug
+
+### Knowledge docs (in `handbook`, a separate repo)
+Added `knowledge/product-sourcing.md`, `knowledge/product-listing.md`, and
+`knowledge/refund-policy.md` — all `status: stable` (a `draft` is admitted
+to no machine surface at all, so an agent's MCP `search` would never find
+one). `npm run check` passed clean; `npx ksor build` admitted all three.
+
+**Bug found and fixed (ingest, not code):** the first `ksor ingest --flip`
+built generation 6 with the new docs embedded, but its own output was
+missing the "pre-flip delta"/"FLIPPED active generation" confirmation lines
+that a second, identical-looking ingest run *did* print — meaning the first
+flip silently did not activate generation 6; the live server kept serving
+generation 5 with no error at all. Confirmed by direct MCP `read`/`search`
+calls returning "no document with slug" for all three new docs even after
+a full `ksor serve` restart (ruled out an in-memory cache — the server's
+own source resolves `active_generation` from the `corpora` table fresh per
+query, not once at boot). A second `ksor ingest --flip` (generation 7)
+printed the expected `FLIPPED active generation -> 7` and the added-slugs
+list, and every document became readable/searchable immediately after.
+Root cause of the first run's silent non-flip not fully identified: worth
+watching for on future ingests — if a flip doesn't print a delta line, it
+probably didn't activate.
+
+### Refund agent
+Added `src/ksor_worker/refund_agent.py` (`run_refund_agent`, `SQLiteSession`
+memory), `RefundRequest`/`RefundResponse` in `models.py`, `POST /refund` in
+`main.py`, `CORSMiddleware` (needed because `system/site` is a static
+export with no live server to proxy through — the widget must call this
+API directly from the browser), and a refund carve-out added to worker.py's
+`INSTRUCTIONS`.
+
+**Real bug found through testing, not assumed — the domain split's first
+design didn't work:**
+
+1. First attempt: prompt-only enforcement on both agents. Tested
+   worker.py against "If a customer returns a product, what happens to my
+   commission?" — it answered directly, using `refund-policy.md`'s own
+   content, **despite an explicit instruction not to**. Not a fluke:
+   confirmed by hand, and the transcript is unambiguous.
+2. Second attempt: reworded to a front-loaded, exact-reply instruction
+   ("check this FIRST, before searching"). This fixed worker.py's
+   exclusion and refund_agent.py's off-domain decline — but broke
+   refund_agent.py the OTHER way: it now declined an actual in-domain
+   question ("How long is the commission holding period?") because the
+   query didn't literally contain "refund" or "return."
+3. Third attempt: broadened refund_agent.py's definition to explicitly
+   include "downstream" effects (commission reversal, holding period,
+   return windows) without requiring the literal words. Retested worker.py
+   and refund_agent.py 3x each on 4 questions: worker.py's refund-decline
+   held (3/3), but a NEW, unrelated false positive appeared — worker.py
+   declined a plain sourcing question ("How do I source product images
+   correctly?") 1 out of 3 times, with identical wording each time. This
+   confirmed genuine non-determinism, not a deterministic misclassification.
+4. Fourth attempt: reworded both prompts to a closed, enumerated 5-topic
+   list (concrete, not the abstract "downstream" framing) and added
+   `ModelSettings(temperature=0)` to both agents for lower-variance
+   classification. Retested the same battery: worker.py's sourcing
+   question now passed 3/3 — but its refund-decline **regressed to 0/3**,
+   answering the same plainly-worded refund question directly every time,
+   deterministically (temperature=0 made it consistently wrong instead of
+   occasionally wrong).
+
+**Conclusion drawn from this sequence, not guessed in advance:** prompt-only
+enforcement of a hard "never answer X" rule is not reliable enough for
+worker.py's direction on this model, even with several different phrasings
+and temperature=0 — the model's learned pull toward using a strong,
+directly-relevant search result outweighs an instruction not to use it. A
+model-based fix was abandoned in favor of a deterministic one for that
+specific direction.
+
+**Final fix**: `is_refund_related()` — a plain keyword match ("refund",
+"return", "cancel", "reversed", etc.) — added to `common.py`, checked in
+`main.py`'s `/ask` handler **before `run_grounded` is ever called**. A
+match short-circuits straight to the fixed `REFUND_DECLINE_MESSAGE`, so the
+model is never given the chance to be talked out of it. Notably,
+refund_agent.py's *reverse* direction (recognizing an in-domain question
+that doesn't say "refund," like "how long until my commission is final?")
+was retested under the same conditions and held reliably through the
+prompt alone (3/3) — so no code-level backstop was added there; the two
+directions ended up enforced differently on purpose, recorded in
+`docs/adr/003-refund-agent-memory.md`.
+
+**Final verification, 3x each, all passing:**
+- `/ask` on a plain refund question → declines (keyword backstop).
+- `/ask` on a plain sourcing question → answers normally.
+- `/refund` on an off-domain question → declines (prompt).
+- `/refund` on a non-literal in-domain question ("how long until my
+  commission is final?") → answers correctly (prompt).
+- `/refund` on a plain refund question → answers correctly.
+- `/refund` memory: a follow-up ("And for electronics specifically?")
+  correctly used context from the prior turn without it being restated.
+- `/compare` unaffected by any of the above changes.
+
+**Remaining for this pass:** the site widget (Part 3 of the plan) and
+committing/pushing both repos.

@@ -35,3 +35,26 @@
 | 24 | Create the new standalone `ksor-worker` GitHub repo         | waiting on user |
 | 25 | First push to the new repo + confirm its CI is green        | pending |
 | 26 | progress.md entry for this pass                             | done |
+
+## Refund agent + knowledge docs + widget build (this pass)
+
+| # | Task                                                          | Status |
+|---|------------------------------------------------------------------|--------|
+| 27 | 3 knowledge docs in `handbook`: product-sourcing, product-listing, refund-policy | done |
+| 28 | `handbook`: `npm run check` + `ksor build` + `ksor ingest --flip` | done |
+| 29 | `common.py`: worker.py refund carve-out, `ALLOWED_ORIGINS`, `is_refund_related()`, `REFUND_DECLINE_MESSAGE` | done |
+| 30 | `src/ksor_worker/refund_agent.py` (`run_refund_agent`, `SQLiteSession` memory) | done |
+| 31 | `models.py`: `RefundRequest`/`RefundResponse`                     | done |
+| 32 | `main.py`: `POST /refund`, CORS middleware, keyword-check backstop | done |
+| 33 | `worker.py`/`refund_agent.py`: `ModelSettings(temperature=0)`      | done |
+| 34 | `.gitignore`: `*.db` (refund_sessions.db)                          | done |
+| 35 | `docs/adr/003-refund-agent-memory.md`                              | done |
+| 36 | docs updated: spec.md, CLAUDE.md                                   | done |
+| 37 | Verify: `/refund` memory across 2 turns (same session_id)          | done |
+| 38 | Verify: `/ask` declines refund questions (3/3, deterministic)      | done |
+| 39 | Verify: `/refund` declines off-domain questions (3/3)              | done |
+| 40 | Verify: `/refund` answers non-literal in-domain questions (3/3)    | done |
+| 41 | Verify: `/compare` unaffected                                      | done |
+| 42 | Widget in `system/site` (Part 3)                                   | pending |
+| 43 | Commit + push this pass's changes (handbook + ksor-worker)         | pending |
+| 44 | progress.md entry for this pass                                   | done |
