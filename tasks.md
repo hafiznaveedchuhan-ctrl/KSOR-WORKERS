@@ -113,4 +113,4 @@
 | 82 | `handbook`: `app/layout.tsx` import updated; `tsc --noEmit` clean; live dev-server render confirmed the renamed widget | done |
 | 83 | `handbook`: CORS re-confirmed live for `/chat` specifically             | done |
 | 84 | Docs updated: `CLAUDE.md`, `spec.md`, `README.md` (ksor-worker); `AGENTS.md` (handbook) | done |
-| 85 | Commit + push both repos                                               | pending |
+| 85 | Commit + push both repos                                               | done |
