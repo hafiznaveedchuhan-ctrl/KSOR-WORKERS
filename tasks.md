@@ -78,4 +78,4 @@
 | 57 | `docs/adr/004-eval-policy-router-agents.md` (new)                     | done |
 | 58 | docs updated: spec.md, CLAUDE.md, tasks.md, progress.md               | done |
 | 59 | Verified all 3 new agents end-to-end (eval, policy anonymization, router simple/complex) | done |
-| 60 | Commit + push                                                          | pending |
+| 60 | Commit + push                                                          | done |
