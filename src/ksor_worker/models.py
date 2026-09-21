@@ -23,3 +23,16 @@ class RefundResponse(BaseModel):
     worker_type: str = "refund"
     session_id: str
     latency_ms: float
+
+
+class ChatRequest(BaseModel):
+    query: str
+    session_id: str | None = None  # minted server-side if omitted
+
+
+class ChatResponse(BaseModel):
+    query: str
+    answer: str
+    worker_type: str = "general"
+    session_id: str
+    latency_ms: float

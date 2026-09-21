@@ -95,3 +95,22 @@
 | 69 | CORS audit: confirmed live that an untrusted origin gets no `access-control-allow-origin` header (not a wildcard) | done |
 | 70 | Full regression battery + memory + eval/policy/router re-verified live after both fixes — all pass | done |
 | 71 | Commit + push this pass                                                | done |
+
+## General assistant (`/chat`) for the widget — no topic split (this pass)
+
+| # | Task                                                                   | Status |
+|---|----------------------------------------------------------------------|--------|
+| 72 | User asked: widget should answer everything (refunds + all topics), not just refund — clarified via question: one unified assistant, not a selector/multi-pane | done |
+| 73 | `src/ksor_worker/general_agent.py` (`run_general_agent`, reuses `common.INSTRUCTIONS`, no `is_refund_related()` gate, own `SQLiteSession` in `general_sessions.db`) | done |
+| 74 | `models.py`: `ChatRequest`/`ChatResponse`                              | done |
+| 75 | `main.py`: `POST /chat`                                                | done |
+| 76 | Verify live: `/chat` answers a refund question directly (no redirect), 3/3 | done |
+| 77 | Verify live: `/chat` memory carries across a topic switch (refund → sourcing, same session) | done |
+| 78 | Verify live: `/chat` still abstains cleanly on a plainly unrelated question | done |
+| 79 | Verify live: `/chat` inherits the anti-hallucination fix (no fabricated link), 3/3 | done |
+| 80 | Verify live: existing `/ask`, `/refund`, `/compare` behavior unaffected | done |
+| 81 | `handbook`: `refund-widget.tsx` renamed to `assistant-widget.tsx`, `RefundWidget` → `AssistantWidget`, endpoint switched to `/chat`, copy/labels generalized | done |
+| 82 | `handbook`: `app/layout.tsx` import updated; `tsc --noEmit` clean; live dev-server render confirmed the renamed widget | done |
+| 83 | `handbook`: CORS re-confirmed live for `/chat` specifically             | done |
+| 84 | Docs updated: `CLAUDE.md`, `spec.md`, `README.md` (ksor-worker); `AGENTS.md` (handbook) | done |
+| 85 | Commit + push both repos                                               | pending |

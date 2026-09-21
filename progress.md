@@ -518,3 +518,55 @@ confirm visually themselves in under a minute.
 **Commits this pass**: `cc8c681` (the 2 bug fixes + README rewrite),
 `9dff20e` (tasks.md), both pushed and CI-green on `KSOR-WORKERS`.
 Corresponding `handbook` commit: `442ee92`.
+
+## 2026-09-21 (continued) — `/chat`: one general assistant for the widget
+
+User asked for the widget to answer "har agent ki taraf se" (from every
+agent) — clarified via a direct question, since that phrase could mean a
+selector, a side-by-side multi-agent comparison, or one unified assistant.
+**User chose: one general assistant, not limited to refunds, no
+selector/comparison UI.**
+
+**Built `general_agent.py`** (`run_general_agent`): reuses
+`common.INSTRUCTIONS` exactly as `/ask` does — which, since the refund
+clause was already removed from that prompt earlier this session, means
+this agent has no topic restriction at all without needing a new prompt
+written from scratch. The one deliberate difference from `/ask`: its
+`main.py` handler does **not** apply `is_refund_related()` — that gate
+exists specifically to enforce `/ask`'s exclusion, and applying it here
+would just recreate the split this endpoint exists to not have. Own
+`SQLiteSession` (`general_sessions.db`), kept separate from
+`refund_sessions.db` so the two endpoints never share a conversation's
+history even if a caller reuses the same `session_id` against both.
+
+**Verified live, all fresh:**
+- `/chat` on a plainly refund-worded question — answers directly, no
+  redirect (`worker_type: "general"`).
+- `/chat` memory carries across a **topic switch** within one session — a
+  refund question, then (same `session_id`) a sourcing question,
+  understood in context both times.
+- `/chat` on a plainly unrelated question — still abstains cleanly
+  ("outside the Ibrahim Digital Solutions knowledge base's scope"), no
+  refund misfire, no fabrication.
+- `/chat` inherits the anti-hallucination fix from earlier this pass — no
+  fabricated citation link, 3/3.
+- `/ask`, `/refund`, `/compare` re-tested — all unaffected by the new
+  endpoint.
+
+**`handbook` side**: `refund-widget.tsx` renamed to `assistant-widget.tsx`
+(component `RefundWidget` → `AssistantWidget`) — a genuine accuracy fix,
+not just a preference, since the file name would otherwise actively
+mislead about what the component now does. Fetch target switched from
+`/refund` to `/chat`; header copy from "Refund Assistant" to "KSOR
+Assistant"; placeholder and aria-labels generalized. `tsc --noEmit` clean;
+the live dev server's rendered HTML confirmed the new `aria-label="Open
+assistant"` on the launcher button; a fresh CORS preflight against `/chat`
+specifically (not just `/refund`) returned the correct
+`access-control-allow-origin`.
+
+Docs updated to match: `CLAUDE.md` (new rule 3a: `/chat` deliberately
+skips the gate; rule 4/6/8 extended to cover `general_agent.py`/
+`general_sessions.db`), `spec.md` (`/chat` section, `ChatRequest`/
+`ChatResponse`, updated Goal/Components), `README.md` (four-endpoint
+table, `/chat` examples, project layout), and `handbook/AGENTS.md` (the
+widget note now names `/chat` specifically, not `/ask`+`/refund`).

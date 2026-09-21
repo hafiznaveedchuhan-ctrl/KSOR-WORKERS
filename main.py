@@ -9,7 +9,15 @@ from mcp.shared.exceptions import MCPError
 
 from ksor_worker.common import ALLOWED_ORIGINS, REFUND_DECLINE_MESSAGE, is_refund_related
 from ksor_worker.compare import run_ungrounded
-from ksor_worker.models import AskRequest, AskResponse, RefundRequest, RefundResponse
+from ksor_worker.general_agent import run_general_agent
+from ksor_worker.models import (
+    AskRequest,
+    AskResponse,
+    ChatRequest,
+    ChatResponse,
+    RefundRequest,
+    RefundResponse,
+)
 from ksor_worker.refund_agent import run_refund_agent
 from ksor_worker.worker import run_grounded
 
@@ -17,9 +25,9 @@ load_dotenv()
 
 app = FastAPI(title="KSOR Worker")
 
-# Needed only for /refund: the site widget calls this API directly from the
-# browser (system/site is a static export with no live server of its own to
-# proxy through — see docs/adr/003-refund-agent-memory.md).
+# Needed for /refund and /chat: the site widget calls this API directly from
+# the browser (system/site is a static export with no live server of its own
+# to proxy through — see docs/adr/003-refund-agent-memory.md).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -105,6 +113,33 @@ async def refund(request: RefundRequest) -> RefundResponse:
         ) from exc
     latency_ms = (time.perf_counter() - start) * 1000
     return RefundResponse(
+        query=request.query,
+        answer=answer,
+        session_id=session_id,
+        latency_ms=latency_ms,
+    )
+
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest) -> ChatResponse:
+    """The general assistant behind the site widget — answers anything in
+    the KSOR record, refunds included, with memory. Deliberately not
+    behind the is_refund_related() gate /ask uses: this endpoint is meant
+    to be the single, unrestricted-by-topic surface for one chat UI."""
+    session_id = request.session_id or str(uuid.uuid4())
+    start = time.perf_counter()
+    try:
+        answer = await run_general_agent(request.query, session_id)
+    except (MCPError, AgentsException) as exc:
+        raise HTTPException(
+            status_code=502, detail=f"KSOR MCP server unavailable: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"General assistant failed: {exc}"
+        ) from exc
+    latency_ms = (time.perf_counter() - start) * 1000
+    return ChatResponse(
         query=request.query,
         answer=answer,
         session_id=session_id,

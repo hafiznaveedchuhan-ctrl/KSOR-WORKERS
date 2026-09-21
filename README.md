@@ -1,6 +1,6 @@
 # ksor-worker
 
-Six small AI agents over one Amazon affiliate knowledge base (KSOR), each
+Seven small AI agents over one Amazon affiliate knowledge base (KSOR), each
 proving a different piece of what a real agentic system needs beyond "call
 an LLM": grounding, domain separation, memory, evaluation, governance, and
 model routing.
@@ -9,14 +9,15 @@ Built on the [OpenAI Agents SDK](https://github.com/openai/openai-agents-python)
 talking to a [KSOR](https://github.com/panaversity/ksor) knowledge record
 (the separate `handbook` repo) over MCP.
 
-## The three HTTP endpoints (`main.py`)
+## The four HTTP endpoints (`main.py`)
 
-| | `POST /ask` | `POST /compare` | `POST /refund` |
-|---|---|---|---|
-| Tools | KSOR MCP (`search`, `outline`, `read`) | none | KSOR MCP |
-| Scope | Amazon affiliate, **excluding** refunds/returns | none — answers anything | **only** refunds/returns/cancellations |
-| Memory | none (single-shot) | none | yes — `SQLiteSession`, keyed by `session_id` |
-| Model | `gpt-4o-mini` | `gpt-4o-mini` | `gpt-4o-mini` |
+| | `POST /ask` | `POST /compare` | `POST /refund` | `POST /chat` |
+|---|---|---|---|---|
+| Tools | KSOR MCP | none | KSOR MCP | KSOR MCP |
+| Scope | Amazon affiliate, **excluding** refunds/returns | none — answers anything | **only** refunds/returns/cancellations | **everything**, refunds included — no split |
+| Memory | none (single-shot) | none | yes — `SQLiteSession` | yes — its own `SQLiteSession` |
+| Model | `gpt-4o-mini` | `gpt-4o-mini` | `gpt-4o-mini` | `gpt-4o-mini` |
+| Used by | `curl`/testing | `curl`/testing | `curl`/testing | **the `handbook` site widget** |
 
 ```
   You ──▶ POST /ask ──▶ run_grounded() ──▶ MCP "search" ──▶ ksor serve
@@ -33,6 +34,11 @@ talking to a [KSOR](https://github.com/panaversity/ksor) knowledge record
            carries session_id)         ▼
                               SQLiteSession remembers this conversation's
                               prior turns automatically on every call
+
+  You ──▶ POST /chat ──▶ run_general_agent() ──▶ MCP "search" (no scope split)
+          (grounded, everything          │
+           including refunds,            ▼
+           carries session_id)  its own SQLiteSession, separate from /refund's
 ```
 
 **The point of `/ask` vs `/compare`:** `/ask` can only say what the
@@ -46,6 +52,14 @@ carries real multi-turn memory `/ask` deliberately doesn't have. The two
 agents partition the record by topic — `/ask` declines anything
 refund-shaped (enforced in code, not just prompt — see "A real bug," below);
 `/refund` declines everything that isn't.
+
+**Why `/chat` exists on top of both:** a single chat widget needs one
+assistant that just answers whatever it's asked — refunds included — not a
+picker between two narrower agents. `/chat` reuses `/ask`'s exact prompt
+(so it inherits the same anti-hallucination and abstention rules) but
+skips the refund exclusion entirely, and adds memory `/ask` doesn't have.
+It is not "better" than `/ask`/`/refund` — it's the right shape
+specifically for one continuous conversation surface.
 
 ## Three more agents on top of the same pattern (CLI only, not HTTP)
 
@@ -104,13 +118,19 @@ curl -X POST localhost:8000/refund \
   -d '{"query": "If a customer returns a product, what happens to my commission?"}'
 ```
 
-`/refund` returns a `session_id` in its response — send that same id back
-on the next call to continue the conversation with real memory:
+curl -X POST localhost:8000/chat \
+  -H 'content-type: application/json' \
+  -d '{"query": "If a customer returns a product, what happens to my commission?"}'
+```
+
+`/refund` and `/chat` both return a `session_id` in their response — send
+that same id back on the next call to continue the conversation with real
+memory (the two endpoints keep separate histories even for the same id):
 
 ```sh
-curl -X POST localhost:8000/refund \
+curl -X POST localhost:8000/chat \
   -H 'content-type: application/json' \
-  -d '{"query": "And for electronics specifically?", "session_id": "<id from the previous response>"}'
+  -d '{"query": "And how do I source good product images?", "session_id": "<id from the previous response>"}'
 ```
 
 The three CLI agents run the same way, each its own process:
@@ -126,7 +146,9 @@ points to `/refund`. Ask `/refund` a non-refund question (even one KSOR
 covers, like product sourcing) — it declines the other way. Ask `/ask`
 something the record doesn't cover at all (e.g. *"Who won the cricket
 world cup?"*) — a plain scope abstention, not a `/refund`-style decline
-and not a fabricated answer.
+and not a fabricated answer. **Then ask `/chat` the exact same refund
+question** — it just answers, no decline, no split, same conversation
+memory whichever topic you ask about next.
 
 ## Environment variables
 
@@ -134,20 +156,21 @@ and not a fabricated answer.
 |---|---|---|---|
 | `OPENAI_API_KEY` | yes | — | OpenAI API access for every agent |
 | `MCP_URL` | no | `http://127.0.0.1:8080/mcp` | where the KSOR-connected agents look for the MCP server |
-| `ALLOWED_ORIGINS` | no | `http://localhost:3000` | comma-separated origins `/refund` accepts browser requests from (the `handbook` site's widget) |
+| `ALLOWED_ORIGINS` | no | `http://localhost:3000` | comma-separated origins `/refund` and `/chat` accept browser requests from (the `handbook` site's widget) |
 
 ## Project layout
 
 ```
-main.py          # FastAPI app — GET /health, POST /ask, POST /compare, POST /refund
+main.py          # FastAPI app — GET /health, POST /ask, POST /compare, POST /refund, POST /chat
 src/ksor_worker/
 ├── common.py         # shared MODEL, MCP_URL, MCP_TIMEOUT_SECONDS, ALLOWED_ORIGINS,
 │                      # INSTRUCTIONS (base KSOR prompt, no refund clause — see below),
 │                      # is_refund_related()/REFUND_DECLINE_MESSAGE
-├── models.py         # AskRequest/AskResponse, RefundRequest/RefundResponse
+├── models.py         # AskRequest/AskResponse, RefundRequest/RefundResponse, ChatRequest/ChatResponse
 ├── worker.py          # run_grounded() — /ask
 ├── compare.py         # run_ungrounded() — /compare, its own unrestricted prompt
 ├── refund_agent.py    # run_refund_agent() — /refund, its own prompt + SQLiteSession memory
+├── general_agent.py    # run_general_agent() — /chat, common.INSTRUCTIONS, no refund gate, own SQLiteSession
 ├── eval_agent.py       # run_eval_agent() — CLI: answer + groundedness judge
 ├── policy_agent.py     # run_policy_agent() — CLI: PII detection + anonymized answer
 └── router_agent.py     # run_router_agent() — CLI: complexity-based model routing

@@ -1,15 +1,17 @@
 # Spec — ksor-worker
 
 ## Goal
-A FastAPI harness around three HTTP-facing agents, each scoped to its own
-domain of the Ibrahim Digital Solutions Amazon affiliate KSoR: a general
-grounded worker (`/ask`), an unrestricted ungrounded assistant for contrast
-(`/compare`), and a refund/returns specialist with real conversation memory
-(`/refund`) — plus three standalone CLI tools that add evaluation,
-governance, and model-routing on top of the same grounded-answer pattern
-(`eval_agent.py`, `policy_agent.py`, `router_agent.py`; see ADR-004). This
-is the foundation for a later deploy to Vercel+Render or Azure Container
-Apps — not built yet, on purpose (see Non-goals).
+A FastAPI harness around four HTTP-facing agents over the Ibrahim Digital
+Solutions Amazon affiliate KSoR: a general grounded worker excluding
+refunds (`/ask`), an unrestricted ungrounded assistant for contrast
+(`/compare`), a refund/returns specialist with real conversation memory
+(`/refund`), and a general assistant with no topic split at all — refunds
+included — also with memory (`/chat`, the site widget's backend) — plus
+three standalone CLI tools that add evaluation, governance, and
+model-routing on top of the same grounded-answer pattern (`eval_agent.py`,
+`policy_agent.py`, `router_agent.py`; see ADR-004). This is the foundation
+for a later deploy to Vercel+Render or Azure Container Apps — not built
+yet, on purpose (see Non-goals).
 
 ## Components
 - `src/ksor_worker/common.py` — shared: `MODEL`, `MCP_URL`,
@@ -17,17 +19,22 @@ Apps — not built yet, on purpose (see Non-goals).
   KSOR-scoped prompt every grounded agent's answering step reuses — **no
   refund clause**, see "The refund/general domain split" below), and the
   `is_refund_related()` keyword check + `REFUND_DECLINE_MESSAGE` constant
-  that are now the *sole* enforcement of the refund exclusion, for every
-  caller.
+  that are now the *sole* enforcement of `/ask`'s refund exclusion
+  (`/chat` deliberately does not use this gate).
 - `src/ksor_worker/models.py` — the API's Pydantic contract: `AskRequest`,
-  `AskResponse`, `RefundRequest`, `RefundResponse`.
+  `AskResponse`, `RefundRequest`, `RefundResponse`, `ChatRequest`,
+  `ChatResponse`.
 - `src/ksor_worker/worker.py` — `async def run_grounded(query: str) -> str`.
 - `src/ksor_worker/compare.py` — `async def run_ungrounded(query: str) -> str`,
   its own local, unrestricted `INSTRUCTIONS`.
 - `src/ksor_worker/refund_agent.py` — `async def run_refund_agent(query:
 str, session_id: str) -> str`, its own local `INSTRUCTIONS` restricting it
   to refunds/returns/cancellations, with real multi-turn memory via the
-  SDK's `SQLiteSession`.
+  SDK's `SQLiteSession` (`refund_sessions.db`).
+- `src/ksor_worker/general_agent.py` — `async def run_general_agent(query:
+str, session_id: str) -> str`, reuses `common.INSTRUCTIONS` (no topic
+  restriction), its own `SQLiteSession` (`general_sessions.db`, kept
+  separate from the refund agent's).
 - `src/ksor_worker/eval_agent.py` — `async def run_eval_agent(query: str) ->
 tuple[str, EvalVerdict]`: answers via KSOR, then judges the answer against
   the exact source chunks retrieved for it. CLI only.
@@ -38,7 +45,7 @@ str) -> dict`: detects and anonymizes sensitive data before the (anonymized)
 str) -> dict`: classifies query complexity, then answers using `gpt-4o-mini`
   or `gpt-4o` accordingly. CLI only.
 - `main.py` (project root) — the FastAPI app: `GET /health`, `POST /ask`,
-  `POST /compare`, `POST /refund`.
+  `POST /compare`, `POST /refund`, `POST /chat`.
 
 ## Model
 `gpt-4o-mini` (`common.MODEL`) for `/ask`, `/compare`, `/refund`,
@@ -177,6 +184,17 @@ comes back in the response — send the same `session_id` on the next call
 to continue the same conversation; the SDK's `SQLiteSession` (keyed by that
 id, in `refund_sessions.db`) automatically carries prior turns forward.
 Same `502`/`500` error shape as `/ask`.
+
+### `POST /chat` — general assistant, no topic split, with memory
+Same request/response shape as `/refund` (`ChatRequest`/`ChatResponse`,
+`"worker_type": "general"`), backed by `general_agent.py`'s
+`run_general_agent()`. This is what the `handbook` site's widget calls.
+Reuses `common.INSTRUCTIONS` exactly as `/ask` does, but — unlike `/ask` —
+does **not** apply the `is_refund_related()` gate, so a refund question is
+answered directly, in the same conversation as anything else. Memory via
+its own `SQLiteSession` in `general_sessions.db` — deliberately separate
+from `refund_sessions.db`, so the same `session_id` used against `/refund`
+and against `/chat` never shares history between the two.
 
 ## MCP connection
 
