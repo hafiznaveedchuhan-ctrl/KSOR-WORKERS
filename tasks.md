@@ -55,6 +55,6 @@
 | 39 | Verify: `/refund` declines off-domain questions (3/3)              | done |
 | 40 | Verify: `/refund` answers non-literal in-domain questions (3/3)    | done |
 | 41 | Verify: `/compare` unaffected                                      | done |
-| 42 | Widget in `system/site` (Part 3)                                   | pending |
-| 43 | Commit + push this pass's changes (handbook + ksor-worker)         | pending |
+| 42 | Widget in `system/site` (Part 3)                                   | done |
+| 43 | Commit this pass's changes (handbook + ksor-worker) — push still waiting on the new GitHub repo (task 24) | done (commit) |
 | 44 | progress.md entry for this pass                                   | done |

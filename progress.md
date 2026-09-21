@@ -272,3 +272,43 @@ directions ended up enforced differently on purpose, recorded in
 
 **Remaining for this pass:** the site widget (Part 3 of the plan) and
 committing/pushing both repos.
+
+## 2026-09-21 (continued) — Widget built in `handbook`, both repos committed
+
+The widget itself lives in `handbook` (`system/site/components/refund-widget.tsx`),
+not here — full detail in that project's own `progress.md`. This entry
+covers what matters from `ksor-worker`'s side: `/refund`'s CORS setup
+(`ALLOWED_ORIGINS`, added earlier this pass) was verified against the
+*actual* cross-origin call the widget makes, not assumed —
+`curl -X OPTIONS /refund` with `Origin: http://localhost:3000` and the
+real preflight headers a browser sends returned `access-control-allow-origin:
+http://localhost:3000` and the right allowed method/headers, confirming the
+browser-based widget can actually reach this API before any UI code was
+trusted to work.
+
+**This pass, in full, end to end:**
+1. 3 new `handbook` knowledge documents (product-sourcing, product-listing,
+   refund-policy) — stable, approved, confirmed live and correctly ranked
+   in search after catching and fixing a silent ingest-flip bug.
+2. `refund_agent.py` with real `SQLiteSession` memory, verified across two
+   turns of one conversation.
+3. A worker.py/refund_agent.py domain split that went through 4 iterations
+   before landing on a reliable design (prompt-only enforcement failed in
+   both directions at different points; the final design is a deterministic
+   keyword check for worker.py's exclusion plus a tested-reliable prompt for
+   refund_agent.py's inclusion) — full sequence above and in
+   `docs/adr/003-refund-agent-memory.md`.
+4. The floating chat widget in `handbook`, CORS-verified end to end.
+5. Both repos' `CLAUDE.md`/`AGENTS.md` and `progress.md` updated to match —
+   `handbook`'s `AGENTS.md` now notes the ingest flip-confirmation check and
+   the widget's dependency on this service as a third local-dev process.
+
+**Push status, checked, not assumed:**
+- This repo (`ksor-worker`): `9c1eaeb` (refund agent + domain-split fix) is
+  committed but **not pushed** — this repo still has no GitHub remote (task
+  24 on `tasks.md`, waiting on the user to create one).
+- `handbook`: `c578f59`, `6fbb461`, and `c9a815e` were committed but had
+  NOT actually been pushed either — `git fetch` + comparing `HEAD` against
+  `origin/main` showed 3 unpushed commits, not zero. Pushed just now
+  (`b790e24..c9a815e`), confirmed against `origin/main` afterward rather
+  than assumed from the earlier push having worked.
