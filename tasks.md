@@ -94,4 +94,4 @@
 | 68 | Security audit: `git log -p --all` grepped for secret patterns in both repos — clean; `.env` never committed in either repo's full history | done |
 | 69 | CORS audit: confirmed live that an untrusted origin gets no `access-control-allow-origin` header (not a wildcard) | done |
 | 70 | Full regression battery + memory + eval/policy/router re-verified live after both fixes — all pass | done |
-| 71 | Commit + push this pass                                                | pending |
+| 71 | Commit + push this pass                                                | done |
