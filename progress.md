@@ -491,3 +491,30 @@ no fix needed:**
 - All 3 new `handbook` knowledge documents re-confirmed live-readable and
   correctly top-ranked in a fresh MCP search — not assumed from the
   earlier ingest-bug fix.
+
+**Final score: 98/100** — category breakdown, each with the evidence
+above: Knowledge content 15/15, Agent correctness & domain split 20/20
+(after the 2 fixes), Widget & UI 18/20, API/backend correctness 10/10,
+Documentation & governance 15/15 (after the README fix), Security &
+hygiene 10/10, CI/CD & repo hygiene 10/10.
+
+**The only deduction (Widget & UI, −2) is an environment constraint, not
+a code defect**: no browser-automation tool is connected in this session
+(confirmed by tool search, not assumed) and none is installable without
+adding new tooling to the sandbox (checked directly — no `chromium`,
+`playwright`, or `puppeteer` present or fetchable). The widget is proven
+correct at the wiring/rendering level — actual server-rendered HTML from
+a live `curl` of the homepage showing the real `bg-primary`/`--radius`/
+`motion-safe:` tokens, plus a live CORS `OPTIONS` and `POST` round-trip
+matching exactly what a browser sends — but never watched actually render
+and get clicked.
+
+**Offered the user the option to attempt installing Playwright to close
+this gap; they explicitly chose to keep the score at 98/100** rather than
+add a new, network-dependent dependency to the sandbox for a 2-point
+gain, since the underlying evidence is already strong and they can
+confirm visually themselves in under a minute.
+
+**Commits this pass**: `cc8c681` (the 2 bug fixes + README rewrite),
+`9dff20e` (tasks.md), both pushed and CI-green on `KSOR-WORKERS`.
+Corresponding `handbook` commit: `442ee92`.
