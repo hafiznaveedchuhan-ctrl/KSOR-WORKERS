@@ -58,3 +58,24 @@
 | 42 | Widget in `system/site` (Part 3)                                   | done |
 | 43 | Commit this pass's changes (handbook + ksor-worker) — push still waiting on the new GitHub repo (task 24) | done (commit) |
 | 44 | progress.md entry for this pass                                   | done |
+| 45 | Push `ksor-worker` to `KSOR-WORKERS` GitHub repo, confirm CI green  | done |
+
+## 3 infrastructure agents: eval / policy / router (this pass)
+
+| # | Task                                                              | Status |
+|---|---------------------------------------------------------------------|--------|
+| 46 | `src/ksor_worker/eval_agent.py` (`run_eval_agent`, groundedness judge, CLI) | done |
+| 47 | `src/ksor_worker/policy_agent.py` (`run_policy_agent`, PII detection/anonymization, CLI) | done |
+| 48 | `src/ksor_worker/router_agent.py` (`run_router_agent`, complexity-based model routing, CLI) | done |
+| 49 | Judged: does KSOR knowledge content need to grow for these agents? Decided no (infrastructure layers, not a new domain) — see ADR-004 | done |
+| 50 | Verify: eval_agent GROUNDED on a real answer, matched citations correct | done |
+| 51 | **Bug found**: judge marked an honest abstention `HALLUCINATED` — fixed judge prompt to treat a clean abstention as `GROUNDED` | done |
+| 52 | **Bug found (pre-existing, not new)**: reusing `common.INSTRUCTIONS` in eval_agent exposed that `/ask` itself declines a *plainly unrelated* question ("cricket world cup") as if it were a refund question, 3/4 times — the keyword gate correctly said no, the model's own prompt-embedded refund clause caused it anyway | done |
+| 53 | **Fix**: removed the refund clause from `common.INSTRUCTIONS` entirely; `is_refund_related()` is now the sole enforcement everywhere it's used | done |
+| 54 | Regression battery re-run after the fix: 19 cases across `/ask`, `/refund`, unrelated-question — all pass | done |
+| 55 | Applied the same `is_refund_related()` gate to eval_agent/policy_agent/router_agent, consistent with `/ask` | done |
+| 56 | `docs/adr/003-refund-agent-memory.md` updated with the further finding and fix | done |
+| 57 | `docs/adr/004-eval-policy-router-agents.md` (new)                     | done |
+| 58 | docs updated: spec.md, CLAUDE.md, tasks.md, progress.md               | done |
+| 59 | Verified all 3 new agents end-to-end (eval, policy anonymization, router simple/complex) | done |
+| 60 | Commit + push                                                          | pending |

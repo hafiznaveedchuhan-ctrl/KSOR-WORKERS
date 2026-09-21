@@ -65,19 +65,58 @@ sync with the prompt for no measured benefit.
 
 ## Consequences
 - The two agents' domain boundary is asymmetric in *how* it's enforced
-  (code + prompt for worker.py's exclusion, prompt alone for
-  refund_agent.py's inclusion) even though the *boundary itself* is meant
-  to be symmetric. This is intentional and should not be "cleaned up" into
-  one uniform mechanism without re-testing both directions the way this
-  ADR did — the asymmetry exists because the two directions were tested
-  and behaved differently, not by accident.
+  (code alone for worker.py's exclusion — see the update below — prompt
+  alone for refund_agent.py's inclusion) even though the *boundary itself*
+  is meant to be symmetric. This is intentional and should not be "cleaned
+  up" into one uniform mechanism without re-testing both directions the
+  way this ADR did — the asymmetry exists because the two directions were
+  tested and behaved differently, not by accident.
 - A keyword list is not a semantic classifier — a refund-adjacent question
-  phrased without any of the listed words could still slip past
-  `is_refund_related()` and reach `worker.py`'s prompt-only fallback,
-  which is not 100% reliable per the finding above. This is an accepted,
-  documented residual risk, not a claim of perfect enforcement.
+  phrased without any of the listed words is not redirected to the refund
+  agent; it gets answered normally by worker.py from KSOR content instead
+  (which, for `refund-policy.md` specifically, is not itself a wrong
+  answer — just not the dedicated, memory-carrying refund agent). This is
+  an accepted, documented residual gap, not a claim of perfect
+  enforcement.
 - `temperature=0` was kept on both `worker.py` and `refund_agent.py` after
-  this investigation, independent of the keyword backstop — a
-  lower-variance classifier is a reasonable default for a prompt that
-  starts with a yes/no domain check, whether or not a code-level backstop
-  also exists for one direction of it.
+  this investigation — a lower-variance classifier is a reasonable default
+  regardless of what backstops exist around it.
+
+## Update (2026-09-21): the prompt-level clause was removed entirely, not just backstopped
+
+Building `eval_agent.py` (a groundedness-evaluation agent reusing
+`worker.py`'s exact `INSTRUCTIONS`) surfaced a worse failure the keyword
+backstop alone hadn't caught: asked a **plainly unrelated** question with
+zero refund keywords ("Who won the cricket world cup?"), `worker.py`
+answered with the refund decline message **3 times out of 4** — not the
+correct general "outside this knowledge base's scope" abstention.
+Confirmed the same failure existed in `/ask` directly (not just
+`eval_agent`), independent of `is_refund_related()`, which correctly
+returned `False` for that query both times — the keyword gate was working
+exactly as designed; the *agent itself*, given the pass-through query, was
+choosing the refund-shaped reply anyway.
+
+**Root cause**: the prompt held two separate "if X, reply with escape-hatch
+Y" instructions back to back (the refund carve-out, then the general
+out-of-scope abstention) — the model was conflating the two, reaching for
+whichever escape-hatch template it read first regardless of which one
+actually matched.
+
+**Fix**: removed the refund-carve-out clause from `INSTRUCTIONS` entirely.
+It now says only "answer from KSOR, abstain honestly if not covered" — no
+mention of refunds at all. `is_refund_related()` (checked in `main.py`'s
+`/ask`, and in `eval_agent.py`/`policy_agent.py`/`router_agent.py` before
+they build an agent with these same `INSTRUCTIONS`) is now the **sole**
+mechanism enforcing worker.py's refund exclusion, not a backstop alongside
+a prompt instruction. Retested the full battery — the unrelated question
+now abstains correctly 4/4, and every previously-passing case (refund
+decline, sourcing answer, refund_agent's own fuzzy in-domain detection)
+still passes.
+
+This sharpens the residual-gap note above: it is no longer "the prompt
+sometimes fails to catch a refund-adjacent phrasing" — there is no prompt
+mechanism for that direction anymore, on purpose, because it was actively
+harmful (a false positive on unrelated content) rather than merely
+imperfect (a false negative on edge-case phrasing). A false negative here
+is an acceptable trade against a false positive that breaks the agent for
+arbitrary unrelated questions.

@@ -312,3 +312,100 @@ trusted to work.
   `origin/main` showed 3 unpushed commits, not zero. Pushed just now
   (`b790e24..c9a815e`), confirmed against `origin/main` afterward rather
   than assumed from the earlier push having worked.
+
+## 2026-09-21 (continued) — `ksor-worker` gets its own GitHub repo, pushed
+
+User created an empty-with-README repo,
+`github.com/hafiznaveedchuhan-ctrl/KSOR-WORKERS`, and had already set it
+as this repo's `origin` and merged its initial README commit (`8824144`)
+into local history before this session touched it again. `git push`
+was a clean fast-forward (`8824144..71d8972`) — no conflict, nothing for
+me to resolve. Confirmed via the GitHub API afterward, not assumed: both
+`CI` runs (`8824144`, `71d8972`) show `completed`/`success`.
+
+## 2026-09-21 (continued) — 3 more agents: eval, policy, router
+
+Built exactly as specified: `eval_agent.py` (`run_eval_agent`) answers via
+KSOR then judges the answer's groundedness against the exact source chunks
+its own run retrieved; `policy_agent.py` (`run_policy_agent`) detects and
+anonymizes PII before the query reaches KSOR; `router_agent.py`
+(`run_router_agent`) classifies a query as simple/complex and answers with
+`gpt-4o-mini`/`gpt-4o` accordingly. All three are standalone CLI tools
+(`uv run python -m ksor_worker.<name>`, `input()` loop, `exit`/`quit`) —
+a deliberate, explicit exception to the "no CLI mode" rule that applies to
+`worker.py`/`compare.py`/`refund_agent.py` (see `CLAUDE.md` rule 4a),
+since these three were asked for as directly runnable tools, not HTTP
+endpoints.
+
+**Judged, not assumed: does the KSOR knowledge base need new content for
+these agents?** No. All three are infrastructure/governance layers over
+the *existing* record (whatever `worker.py` would retrieve) — not a new
+business domain the way refunds were. Adding "how our eval/policy/router
+agent works" documents would also sit outside `instance.md`'s declared
+Amazon-affiliate scope. Recorded plainly rather than padding the record
+with documents nothing needs, per `CLAUDE.md`'s new rule 9.
+
+**Two real bugs found through testing — one in the new judge, one
+pre-existing in `/ask` itself, exposed by reusing `common.INSTRUCTIONS`:**
+
+1. **Judge bug (new code):** asked `eval_agent` an out-of-scope question
+   ("Who won the cricket world cup?"), the answering agent correctly
+   abstained ("outside the knowledge base's scope"), but the judge marked
+   this honest abstention `HALLUCINATED` — backwards: declining without
+   evidence is the *correct* outcome, not a fabrication. **Fixed** by
+   telling the judge explicitly that a clean abstention (no other claims
+   asserted) is `GROUNDED`, never `HALLUCINATED`. Retested: correct.
+
+2. **Pre-existing `/ask` bug, not previously caught:** building
+   `eval_agent.py`'s answering step by reusing `common.INSTRUCTIONS`
+   (exactly as `worker.py`'s `run_grounded` does) surfaced that the SAME
+   unrelated cricket question got answered with the *refund* decline
+   message — "That's a refund/return question — please ask the refund
+   assistant instead." Confirmed this was not new-code-specific: hitting
+   `/ask` directly with the identical query reproduced it, **3–4 times out
+   of 4** on repeated calls, even though `is_refund_related()` (checked
+   separately) correctly returned `False` both times. So the deterministic
+   keyword gate was working exactly as designed — the *model itself*,
+   given a query that passed the gate, was independently choosing the
+   refund-shaped reply for a totally unrelated question. Root cause:
+   `common.INSTRUCTIONS` held two similar-looking "if X, reply with
+   escape-hatch Y" instructions (the refund carve-out, then the general
+   out-of-scope abstention) back to back, and the model was conflating
+   "I shouldn't answer this" in general with "this specifically matches
+   the refund carve-out."
+
+   **Fix, more drastic than a second backstop:** removed the refund
+   carve-out clause from `common.INSTRUCTIONS` **entirely**. It now says
+   only "answer strictly from KSOR, abstain honestly if not covered" — no
+   mention of refunds at all. `is_refund_related()` is now the *sole*
+   mechanism enforcing the refund exclusion wherever `common.INSTRUCTIONS`
+   is used: `main.py`'s `/ask`, and — applied consistently as part of this
+   same fix — `eval_agent.py`, `policy_agent.py` (checked on the
+   *anonymized* query), and `router_agent.py` (checked before routing, so
+   a decline needs no model selection). `refund_agent.py`'s own reverse
+   direction (recognizing an in-domain question that doesn't say "refund")
+   was re-verified separately and still holds through its own prompt
+   alone — untouched by this fix, since it's a different prompt with no
+   shared clause to remove.
+
+**Full regression battery re-run after the fix (all passing, 3–4 repeats
+each): `/ask` on the unrelated question (4/4 correct general abstention,
+was 0–1/4 before), `/ask` on a refund question (3/3 decline),
+`/ask` on a sourcing question (3/3 answer), `/refund` on a sourcing
+question (3/3 decline), `/refund` on a non-literal in-domain question
+(3/3 answer), `/refund` on a refund question (3/3 answer), `/compare`
+and `/refund` memory both re-confirmed unaffected.**
+
+`docs/adr/003-refund-agent-memory.md` updated with this further finding
+(it's a continuation of that ADR's own subject, not a new one);
+`docs/adr/004-eval-policy-router-agents.md` added for these three agents'
+own design decisions. `CLAUDE.md` and `spec.md` updated to match —
+`common.INSTRUCTIONS`'s file-level comment now records why it must never
+regain a refund clause.
+
+**Verified end-to-end, once the fix landed:** `eval_agent` on a real
+in-scope question — `GROUNDED`, correct matched citations; `policy_agent`
+on a query containing an email — detected, anonymized to `[EMAIL]`,
+answered correctly; `router_agent` on a simple question — `gpt-4o-mini`
+selected; on a deliberately multi-step comparative question —
+`gpt-4o` selected.

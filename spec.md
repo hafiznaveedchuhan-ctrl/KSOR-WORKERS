@@ -1,20 +1,24 @@
 # Spec — ksor-worker
 
 ## Goal
-A FastAPI harness around three agents, each scoped to its own domain of the
-Ibrahim Digital Solutions Amazon affiliate KSoR: a general grounded worker
-(`/ask`), an unrestricted ungrounded assistant for contrast (`/compare`),
-and a refund/returns specialist with real conversation memory (`/refund`).
-This is the foundation for a later deploy to Vercel+Render or Azure
-Container Apps — not built yet, on purpose (see Non-goals).
+A FastAPI harness around three HTTP-facing agents, each scoped to its own
+domain of the Ibrahim Digital Solutions Amazon affiliate KSoR: a general
+grounded worker (`/ask`), an unrestricted ungrounded assistant for contrast
+(`/compare`), and a refund/returns specialist with real conversation memory
+(`/refund`) — plus three standalone CLI tools that add evaluation,
+governance, and model-routing on top of the same grounded-answer pattern
+(`eval_agent.py`, `policy_agent.py`, `router_agent.py`; see ADR-004). This
+is the foundation for a later deploy to Vercel+Render or Azure Container
+Apps — not built yet, on purpose (see Non-goals).
 
 ## Components
 - `src/ksor_worker/common.py` — shared: `MODEL`, `MCP_URL`,
-  `MCP_TIMEOUT_SECONDS`, `ALLOWED_ORIGINS`, `INSTRUCTIONS` (worker.py's
-  KSOR-scoped prompt, including its refund carve-out), and the
+  `MCP_TIMEOUT_SECONDS`, `ALLOWED_ORIGINS`, `INSTRUCTIONS` (the base
+  KSOR-scoped prompt every grounded agent's answering step reuses — **no
+  refund clause**, see "The refund/general domain split" below), and the
   `is_refund_related()` keyword check + `REFUND_DECLINE_MESSAGE` constant
-  that backstop that carve-out (see "The refund/general domain split"
-  below).
+  that are now the *sole* enforcement of the refund exclusion, for every
+  caller.
 - `src/ksor_worker/models.py` — the API's Pydantic contract: `AskRequest`,
   `AskResponse`, `RefundRequest`, `RefundResponse`.
 - `src/ksor_worker/worker.py` — `async def run_grounded(query: str) -> str`.
@@ -24,55 +28,107 @@ Container Apps — not built yet, on purpose (see Non-goals).
 str, session_id: str) -> str`, its own local `INSTRUCTIONS` restricting it
   to refunds/returns/cancellations, with real multi-turn memory via the
   SDK's `SQLiteSession`.
+- `src/ksor_worker/eval_agent.py` — `async def run_eval_agent(query: str) ->
+tuple[str, EvalVerdict]`: answers via KSOR, then judges the answer against
+  the exact source chunks retrieved for it. CLI only.
+- `src/ksor_worker/policy_agent.py` — `async def run_policy_agent(query:
+str) -> dict`: detects and anonymizes sensitive data before the (anonymized)
+  query reaches KSOR. CLI only.
+- `src/ksor_worker/router_agent.py` — `async def run_router_agent(query:
+str) -> dict`: classifies query complexity, then answers using `gpt-4o-mini`
+  or `gpt-4o` accordingly. CLI only.
 - `main.py` (project root) — the FastAPI app: `GET /health`, `POST /ask`,
   `POST /compare`, `POST /refund`.
 
 ## Model
-`gpt-4o-mini` for all three agents, imported from `common.py` — kept
-identical so the model itself is never a variable in any comparison.
+`gpt-4o-mini` (`common.MODEL`) for `/ask`, `/compare`, `/refund`,
+`eval_agent`, and `policy_agent` — kept identical so the model itself is
+never a variable in any comparison between them. `router_agent` is the one
+deliberate exception: it answers with `gpt-4o-mini` or `gpt-4o` depending
+on its own classification (that's its entire purpose), though its
+classifier step always runs on `gpt-4o-mini` regardless of what it
+decides.
 
-## System prompts (three, by design)
-- **worker.py** (`common.INSTRUCTIONS`): casts the agent as the Amazon
-  affiliate assistant for Ibrahim Digital Solutions, instructed to answer
-  only from the KSOR knowledge base and to say plainly when a question falls
-  outside it rather than guessing — **and to decline refund/return/
-  cancellation questions**, redirecting to the refund assistant instead.
+## System prompts
+- **worker.py** (`common.INSTRUCTIONS`, also reused by `eval_agent.py`/
+  `policy_agent.py`/`router_agent.py`'s answering step): casts the agent as
+  the Amazon affiliate assistant for Ibrahim Digital Solutions, instructed
+  to answer only from the KSOR knowledge base and to say plainly when a
+  question falls outside it rather than guessing. **Carries no
+  refund-related clause at all** — see the domain-split section below for
+  why.
 - **compare.py** (its own local `INSTRUCTIONS`): a general Amazon affiliate
   marketing assistant with no scope restriction and no knowledge-base
-  reference — free to answer from its own training knowledge. Unchanged by
-  the refund work.
+  reference — free to answer from its own training knowledge. Unaffected
+  by the refund work.
 - **refund_agent.py** (its own local `INSTRUCTIONS`): answers only
   refund/return/cancellation questions (and their direct effects — commission
   reversal, the holding period, return windows) from the KSOR knowledge
   base; declines everything else the KSOR covers, even topics like product
   hunting or reviews.
 
-## The refund/general domain split — and a real reliability finding
+## The refund/general domain split — enforced by code alone, not prompt
 
-worker.py and refund_agent.py are meant to partition the KSOR's content by
-topic through their prompts alone (MCP's `search` tool has no per-agent
-category filter to enforce this with server-side). **Prompt-only
-enforcement of worker.py's refund carve-out was tested and found
-unreliable**: with a plainly refund-worded question ("If a customer
-returns a product, what happens to my commission?"), worker.py answered it
-directly — using the newly-added `refund-policy.md` content — on 3 out of 3
-repeated calls, despite an explicit, front-loaded instruction not to. A
-later attempt with a more specific instruction and `temperature=0`
-*improved* consistency but did not fully fix it, and separately introduced
-the opposite failure on an unrelated question (see `progress.md` for the
-full sequence).
+worker.py and refund_agent.py partition the KSOR's content by topic (MCP's
+`search` tool has no per-agent category filter to enforce this with
+server-side). **Prompt-only enforcement of worker.py's refund exclusion
+was tried twice and failed twice, in two different ways**, before landing
+on the current design:
 
-**Fix**: a deterministic keyword check, `is_refund_related()` in
-`common.py`, runs in `main.py`'s `/ask` handler **before the agent runs at
-all** — a keyword hit short-circuits straight to `REFUND_DECLINE_MESSAGE`
-with no model call. The prompt instruction stays as a second layer, for
-refund-adjacent phrasing (like "how long until my commission is final?")
-that doesn't contain an obvious keyword — the refund agent's *own* fuzzy
-in-domain detection (the reverse direction: recognizing an in-domain
-question that doesn't say "refund") was tested and found to work reliably
-through the prompt alone, so no code-level backstop was needed there.
-`temperature=0` was kept on both agents regardless, since a lower-variance
-classifier is a reasonable default even with the keyword backstop in place.
+1. A plainly refund-worded question answered directly, using
+   `refund-policy.md`'s own content, on 3/3 calls despite an explicit
+   instruction not to.
+2. After rewording, that case was fixed, but a **plainly unrelated**
+   question ("Who won the cricket world cup?") started getting the refund
+   decline message on 3/4 calls — the model was conflating two
+   similar-looking "if X, reply with escape-hatch Y" instructions in one
+   prompt.
+
+**Current design**: `common.INSTRUCTIONS` carries no refund clause at all.
+`is_refund_related()` — a plain keyword match ("refund," "return,"
+"cancel," "reversed," etc.) — is the **sole** enforcement, checked in code
+before any agent that reuses `common.INSTRUCTIONS` is built: `main.py`'s
+`/ask` handler, and each of `eval_agent.py`/`policy_agent.py`/
+`router_agent.py`. A match short-circuits straight to
+`REFUND_DECLINE_MESSAGE` with no model call at all. Accepted trade-off: a
+genuinely refund-adjacent question with no matching keyword (e.g. "how
+long until my commission is final?") is no longer redirected to the
+refund agent — it gets answered normally from KSOR content instead, which
+is a minor, low-stakes gap next to the false-positive bug it replaced.
+
+`refund_agent.py`'s *reverse* direction (recognizing an in-domain question
+that doesn't say "refund") is a different, separately-tested mechanism —
+its own prompt was found to work reliably (not the shared
+`common.INSTRUCTIONS`), so it keeps that prompt and has no code-level
+backstop. `temperature=0` is kept on every agent built from
+`common.INSTRUCTIONS` regardless of the keyword gate, since a
+lower-variance classifier is a reasonable default on its own. Full
+sequence: `progress.md` and `docs/adr/003-refund-agent-memory.md`.
+
+## Three CLI agents on top of the same pattern (see ADR-004)
+
+- **`eval_agent.py`**: answers a query the same way `/ask` does, then a
+  second, separate judge agent (structured `EvalVerdict` output) checks
+  whether the answer is actually supported by the exact source chunks the
+  first agent's `search` tool call returned (read from the run's own
+  `ToolCallOutputItem`s, not a second search) — verdict `GROUNDED`,
+  `PARTIALLY_GROUNDED`, or `HALLUCINATED`. An honest abstention ("outside
+  this knowledge base's scope") is itself `GROUNDED`, never
+  `HALLUCINATED` — declining without evidence is correct behavior, not a
+  fabrication (a real, tested-and-fixed judge bug — see progress.md).
+- **`policy_agent.py`**: a detector agent (structured `PiiDetection`
+  output) finds and replaces names/emails/phones/financial data/passwords
+  with bracketed placeholders before the *anonymized* query ever reaches
+  KSOR.
+- **`router_agent.py`**: a classifier agent (structured `RoutingDecision`
+  output, always running on `gpt-4o-mini` regardless of its answer) picks
+  `gpt-4o-mini` for a simple/factual question or `gpt-4o` for a
+  multi-step/comparative one, then answers with the selected model.
+
+All three are standalone, `input()`-loop CLI tools
+(`uv run python -m ksor_worker.<name>`) — not FastAPI endpoints; this is a
+deliberate exception to the "no CLI mode" rule that applies to
+`worker.py`/`compare.py`/`refund_agent.py` (see `CLAUDE.md` rule 4a).
 
 ## HTTP API (`main.py`)
 
@@ -150,6 +206,14 @@ uv run uvicorn main:app --reload --port 8000
 ```
 `/ask` additionally needs `ksor serve` running (in the separate `handbook`
 project) on the URL named by `MCP_URL`.
+
+The three CLI agents run the same way, each its own process, each also
+needing `ksor serve` up:
+```sh
+uv run python -m ksor_worker.eval_agent
+uv run python -m ksor_worker.policy_agent
+uv run python -m ksor_worker.router_agent
+```
 
 ## Future deployment targets (not built yet)
 Vercel+Render (split: a Render web service for the FastAPI app, since it's a

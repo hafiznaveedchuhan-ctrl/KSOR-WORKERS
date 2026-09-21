@@ -43,31 +43,34 @@ def is_refund_related(query: str) -> bool:
     return any(keyword in lowered for keyword in REFUND_KEYWORDS)
 
 
-# Single source for this exact string — used both in worker.py's prompt
-# (for refund-adjacent phrasing the keyword list above doesn't catch) and
-# as the literal response main.py returns when the keyword check fires, so
-# the two paths can never say something different for the same rule.
+# Single source for this exact string — every caller that short-circuits on
+# is_refund_related() returns this, so the message can never drift between
+# call sites.
 REFUND_DECLINE_MESSAGE = (
     "That's a refund/return question — please ask the refund assistant instead."
 )
 
+# INSTRUCTIONS deliberately carries NO refund-related clause — that was
+# tried and made things worse, not better. A prompt-embedded "if this is
+# about refunds, reply with X" instruction was found (2026-09-21) to also
+# make the model answer PLAINLY UNRELATED questions (e.g. "Who won the
+# cricket world cup?") with the refund decline text, 3 times out of 4 on
+# repeated calls — the model was conflating "I shouldn't answer this" in
+# general with "this specifically matches the refund carve-out," because
+# both were phrased as similar-looking escape-hatch templates in one
+# prompt. Removing the clause entirely and relying solely on
+# is_refund_related() as a pre-call gate (in main.py and in every agent
+# that reuses these INSTRUCTIONS) fixed the false positive. The accepted
+# trade-off: a genuinely refund-adjacent question with no matching keyword
+# (e.g. "how long until my commission is final?") is no longer redirected
+# — it gets answered normally from KSOR content instead, which is a minor,
+# low-stakes gap next to the bug it replaced. Full sequence in
+# docs/adr/003-refund-agent-memory.md.
 INSTRUCTIONS = (
     "You are the Amazon affiliate marketing assistant for Ibrahim Digital "
-    "Solutions.\n\n"
-    "FIRST, before doing anything else — including before searching — "
-    "check if the question matches any of exactly these 5 topics: (1) "
-    "returning or refunding a product, (2) canceling an order, (3) "
-    "commission being reversed or clawed back, (4) the commission "
-    "holding/payout period before a commission is final, (5) return "
-    "windows. If it matches ANY of those 5, do not search and do not "
-    f'answer it — reply with exactly this and nothing else: "{REFUND_DECLINE_MESSAGE}" '
-    "A question that only mentions commissions, earnings, or payouts in "
-    "general — with no return, refund, cancellation, reversal, or "
-    "holding-period angle — does NOT match and should be answered "
-    "normally.\n\n"
-    "For every other question: answer strictly from the Ibrahim Digital "
-    "Solutions Amazon affiliate knowledge base (KSOR) — never from "
-    "general or pretrained knowledge. If the knowledge base does not "
-    "cover the question, say plainly that it is outside the knowledge "
-    "base's scope instead of guessing."
+    "Solutions. Answer strictly from the Ibrahim Digital Solutions Amazon "
+    "affiliate knowledge base (KSOR) — never from general or pretrained "
+    "knowledge. If the knowledge base does not cover the question, say "
+    "plainly that it is outside the knowledge base's scope instead of "
+    "guessing."
 )
