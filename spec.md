@@ -196,6 +196,33 @@ its own `SQLiteSession` in `general_sessions.db` — deliberately separate
 from `refund_sessions.db`, so the same `session_id` used against `/refund`
 and against `/chat` never shares history between the two.
 
+### `POST /triage` — real orchestration, hands off to one of 5 specialists
+Request: `{"query": str, "session_id": str | None}`. Response:
+`{"query": str, "answer": str, "routed_to": str, "session_id": str,
+"latency_ms": float}`. `routed_to` is `result.last_agent.name` from the
+OpenAI Agents SDK's own `handoffs` run — the specialist that actually
+produced the answer, never hardcoded. One `TriageAgent`
+(`triage_agent.py`) hands off to exactly one of `KSORWorker` (general
+knowledge — reuses `worker.py`'s `INSTRUCTIONS` verbatim),
+`RefundSpecialist` (reuses `refund_agent.py`'s `INSTRUCTIONS` verbatim),
+`PolicySpecialist` (new, single-call: redact PII silently, answer from the
+redacted intent), `EvalSpecialist` (new, single-call: answer, then a
+`Groundedness check: GROUNDED|PARTIALLY_GROUNDED|HALLUCINATED` self-
+assessment line), or `RouterSpecialist` (new, single-call, no MCP tools:
+model-selection advice only). Memory via its own `SQLiteSession` in
+`triage_sessions.db`, carrying across a handoff (verified live: a later
+turn routed to a different specialist than an earlier turn can still
+recall that earlier turn's content). See `docs/adr/005-triage-handoffs.md`
+for why the three infrastructure specialists had to be rebuilt rather than
+reused from `eval_agent.py`/`policy_agent.py`/`router_agent.py`, and for
+two bugs found and fixed live: the SDK's default handoff leaking the
+triage agent's own tool-call noise into a specialist's context (fixed with
+`handoff(..., input_filter=handoff_filters.remove_all_tools)`), and a
+prior specialist's decline priming `KSORWorker` to skip searching (fixed
+with `tool_choice="required"` on `KSORWorker` specifically, scoped to this
+file only). Same `502`/`500` error shape as the other endpoints. Also runs
+standalone: `uv run python -m ksor_worker.triage_agent`.
+
 ## MCP connection
 
 `run_grounded()` opens its own `MCPServerStreamableHttp` **per call**
@@ -225,12 +252,13 @@ uv run uvicorn main:app --reload --port 8000
 `/ask` additionally needs `ksor serve` running (in the separate `handbook`
 project) on the URL named by `MCP_URL`.
 
-The three CLI agents run the same way, each its own process, each also
+The four CLI agents run the same way, each its own process, each also
 needing `ksor serve` up:
 ```sh
 uv run python -m ksor_worker.eval_agent
 uv run python -m ksor_worker.policy_agent
 uv run python -m ksor_worker.router_agent
+uv run python -m ksor_worker.triage_agent
 ```
 
 ## Future deployment targets (not built yet)

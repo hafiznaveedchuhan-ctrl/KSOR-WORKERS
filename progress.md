@@ -1,6 +1,92 @@
 # Progress — ksor-worker
 
-## 🔴 SESSION HANDOFF (2026-09-21, latest) — read this before doing anything
+## 2026-09-22 — Triage agent built: real SDK handoffs, `/triage`, widget toggle
+
+The pending task from the 2026-09-21 handoff (below) is done. Built
+`triage_agent.py`: one `TriageAgent` hands off to 5 specialists
+(`KSORWorker`, `RefundSpecialist` — reused `INSTRUCTIONS` verbatim;
+`PolicySpecialist`/`EvalSpecialist`/`RouterSpecialist` — new, single-call,
+built only for this file, since a handoff target must be a single `Agent`
+and the CLI tools with those names are 2-step pipelines) via the real
+OpenAI Agents SDK `handoffs` mechanism — `routed_to` in the response is
+`result.last_agent.name`, never hardcoded. New `POST /triage` in
+`main.py`, own `triage_sessions.db` session store, own `_cli()` (`uv run
+python -m ksor_worker.triage_agent`). Full architecture and every bug
+below: `docs/adr/005-triage-handoffs.md`.
+
+**Three real bugs found and fixed live** (not by inspection — found by
+running the actual thing repeatedly and reading what came back):
+1. The SDK's default handoff passes a specialist the triage agent's own
+   `transfer_to_x` tool-call and its JSON output as prior context — that
+   clutter derailed `RefundSpecialist`'s strict "does this match exactly
+   these 5 topics" check, reproducibly 3/3 for a plain in-domain question.
+   Fixed: every specialist wrapped in `handoff(agent,
+   input_filter=handoff_filters.remove_all_tools)` instead of passed bare.
+2. `EvalSpecialist`'s self-assessment invented non-spec verdict words
+   (`ABSTAINED`, `UNVERIFIED`) instead of the 3 fixed tokens the prompt
+   named — fixed by stating the 3-token constraint negatively as well as
+   positively ("never any other word, never X, Y, Z").
+3. `RouterSpecialist` declined a valid model-selection question that
+   already named its own complexity inline ("...for a complex multi-step
+   reasoning task?") about 2/3 of the time, reading it as "too vague."
+   Fixed by clarifying the query itself is the task, however phrased.
+
+**A fourth, subtler bug, found only through heavy live retesting**: in a
+multi-turn triage session, a PRIOR specialist's decline (not its tool-call
+noise — its plain text, e.g. "please ask the general assistant instead")
+could prime `KSORWorker`'s NEXT turn to skip the KSOR search tool entirely
+and self-decline a completely unrelated, clearly in-scope question.
+Reproduced with a bare `Agent`+`Runner.run()` call given that exact
+3-message history and zero triage/handoff machinery involved — so this is
+a property of `common.INSTRUCTIONS` + a preceding refusal-flavored turn,
+not the handoff code. Only `/triage` can ever produce this shape of
+history (`/chat` never generates a decline-flavored turn at all, since it
+skips the refund gate by design), so the fix is scoped to `triage_agent.py`
+only: `tool_choice="required"` on `KSORWorker` specifically — a prompt-only
+attempt (telling the agent to disregard a prior unrelated decline) was
+tried first and did not reliably work. Verified 3/3 clean at realistic
+(a few seconds apart) turn spacing after the fix.
+
+**Two pre-existing issues found during this testing, NOT fixed here (out
+of scope — they predate this session's work and reproduce identically on
+the unmodified, already-shipped endpoints with no triage involved)**:
+- `refund_agent.py`'s domain check is inconsistent on Roman Urdu phrasing
+  ("mera refund kab aayega" sometimes declines as if out-of-domain,
+  sometimes answers correctly) — reproduced on the plain `/refund`
+  endpoint directly.
+- `common.INSTRUCTIONS`-based agents occasionally answer an in-scope-
+  sounding question from general/pretrained knowledge instead of
+  abstaining when the record genuinely has no matching content — caught
+  when `/refund` gave detailed Amazon UI cancellation steps that
+  `knowledge/refund-policy.md` (grepped directly) does not contain at all.
+  Confirmed as a real grounding leak, not a one-off: a correct, honest
+  "I couldn't find specific information" answer for the same query was
+  the more common, and more correct, result on retest.
+
+Both are flagged for whoever next touches `common.INSTRUCTIONS`/
+`refund_agent.py` — fixing either means editing a shared prompt several
+endpoints depend on, which is exactly the kind of change ADR-003 already
+warns can make things worse without careful, isolated re-verification, so
+it was deliberately left alone rather than patched inside this task.
+
+Also found, separately, and NOT a code bug: rapid, zero-delay back-to-back
+test calls (the shape a test script sends, not a real user) surfaced
+intermittent `openai.APITimeoutError`s and MCP tool errors in this
+sandbox, reproduced even for single-turn, no-history, no-session queries.
+Environmental request-layer flakiness under synthetic burst load — already
+handled correctly by `main.py`'s existing 502/500 fail-closed behavior.
+
+`handbook`'s `assistant-widget.tsx`: added a General/Smart Triage toggle.
+Each mode keeps its own session id (localStorage) and its own message
+history, matching the backend's own session separation. Smart Triage mode
+shows "Routed to: X" under each reply, sourced directly from the API
+response, never inferred client-side. `tsc --noEmit` clean; dev server
+hot-reloaded with no compile errors. No real browser automation tool was
+available this session to click through it in an actual browser — flagged
+honestly rather than claimed as verified; the underlying `/chat` and
+`/triage` calls it makes were both extensively live-tested via curl.
+
+## 🔴 SESSION HANDOFF (2026-09-21) — superseded, task above is now done
 
 Context window was filling up mid-task; the user is about to `/clear` and
 start a fresh session. **This section is written so a brand-new AI session

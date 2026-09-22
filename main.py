@@ -17,8 +17,11 @@ from ksor_worker.models import (
     ChatResponse,
     RefundRequest,
     RefundResponse,
+    TriageRequest,
+    TriageResponse,
 )
 from ksor_worker.refund_agent import run_refund_agent
+from ksor_worker.triage_agent import run_triage_agent
 from ksor_worker.worker import run_grounded
 
 load_dotenv()
@@ -142,6 +145,34 @@ async def chat(request: ChatRequest) -> ChatResponse:
     return ChatResponse(
         query=request.query,
         answer=answer,
+        session_id=session_id,
+        latency_ms=latency_ms,
+    )
+
+
+@app.post("/triage", response_model=TriageResponse)
+async def triage(request: TriageRequest) -> TriageResponse:
+    """Real orchestration: hands off to one of 5 specialist Agents via the
+    SDK's own handoffs mechanism. `routed_to` is result.last_agent.name —
+    the specialist that actually produced the answer — never hardcoded or
+    guessed. See triage_agent.py and docs/adr/005-triage-handoffs.md."""
+    session_id = request.session_id or str(uuid.uuid4())
+    start = time.perf_counter()
+    try:
+        answer, routed_to = await run_triage_agent(request.query, session_id)
+    except (MCPError, AgentsException) as exc:
+        raise HTTPException(
+            status_code=502, detail=f"KSOR MCP server unavailable: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Triage agent failed: {exc}"
+        ) from exc
+    latency_ms = (time.perf_counter() - start) * 1000
+    return TriageResponse(
+        query=request.query,
+        answer=answer,
+        routed_to=routed_to,
         session_id=session_id,
         latency_ms=latency_ms,
     )

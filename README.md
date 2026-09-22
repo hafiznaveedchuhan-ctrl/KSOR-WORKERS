@@ -1,23 +1,23 @@
 # ksor-worker
 
-Seven small AI agents over one Amazon affiliate knowledge base (KSOR), each
+Eight small AI agents over one Amazon affiliate knowledge base (KSOR), each
 proving a different piece of what a real agentic system needs beyond "call
-an LLM": grounding, domain separation, memory, evaluation, governance, and
-model routing.
+an LLM": grounding, domain separation, memory, evaluation, governance,
+model routing, and — the last one — real multi-agent orchestration.
 
 Built on the [OpenAI Agents SDK](https://github.com/openai/openai-agents-python),
 talking to a [KSOR](https://github.com/panaversity/ksor) knowledge record
 (the separate `handbook` repo) over MCP.
 
-## The four HTTP endpoints (`main.py`)
+## The five HTTP endpoints (`main.py`)
 
-| | `POST /ask` | `POST /compare` | `POST /refund` | `POST /chat` |
-|---|---|---|---|---|
-| Tools | KSOR MCP | none | KSOR MCP | KSOR MCP |
-| Scope | Amazon affiliate, **excluding** refunds/returns | none — answers anything | **only** refunds/returns/cancellations | **everything**, refunds included — no split |
-| Memory | none (single-shot) | none | yes — `SQLiteSession` | yes — its own `SQLiteSession` |
-| Model | `gpt-4o-mini` | `gpt-4o-mini` | `gpt-4o-mini` | `gpt-4o-mini` |
-| Used by | `curl`/testing | `curl`/testing | `curl`/testing | **the `handbook` site widget** |
+| | `POST /ask` | `POST /compare` | `POST /refund` | `POST /chat` | `POST /triage` |
+|---|---|---|---|---|---|
+| Tools | KSOR MCP | none | KSOR MCP | KSOR MCP | KSOR MCP (per specialist) |
+| Scope | Amazon affiliate, **excluding** refunds/returns | none — answers anything | **only** refunds/returns/cancellations | **everything**, refunds included — no split | routed to 1 of 5 specialists |
+| Memory | none (single-shot) | none | yes — `SQLiteSession` | yes — its own `SQLiteSession` | yes — its own `SQLiteSession` |
+| Model | `gpt-4o-mini` | `gpt-4o-mini` | `gpt-4o-mini` | `gpt-4o-mini` | `gpt-4o-mini` |
+| Used by | `curl`/testing | `curl`/testing | `curl`/testing | **the `handbook` site widget** (General mode) | **the `handbook` site widget** (Smart Triage mode) |
 
 ```
   You ──▶ POST /ask ──▶ run_grounded() ──▶ MCP "search" ──▶ ksor serve
@@ -70,7 +70,42 @@ specifically for one continuous conversation surface.
 | Output | `GROUNDED` / `PARTIALLY_GROUNDED` / `HALLUCINATED` + matched citations | original query, anonymized query, answer | query type, model selected, reason, answer |
 
 These are standalone `input()`-loop tools, not FastAPI routes — asked for
-as directly runnable demo/testing tools. `main.py` stays a 3-endpoint app.
+as directly runnable demo/testing tools.
+
+## The eighth agent: `POST /triage` — real orchestration
+
+`triage_agent.py` is one `TriageAgent` that hands off to exactly one of 5
+specialists using the OpenAI Agents SDK's own `handoffs` mechanism
+(`Agent(handoffs=[...])`, `result.last_agent.name`) — not a keyword
+`if/else` pretending to be one:
+
+```
+  You ──▶ POST /triage ──▶ TriageAgent decides ──▶ hands off to ONE of:
+          {"query": "..."}         │                 KSORWorker        (general KSOR questions)
+                                    │                 RefundSpecialist  (refunds/returns/cancellations)
+                                    │                 PolicySpecialist  (redacts PII, then answers)
+                                    │                 EvalSpecialist    (answers + self groundedness check)
+                                    ▼                 RouterSpecialist  (model-selection advice, no KSOR tools)
+                        {"answer": "...", "routed_to": "RefundSpecialist", ...}
+```
+
+`KSORWorker` and `RefundSpecialist` reuse `worker.py`'s/`refund_agent.py`'s
+exact `INSTRUCTIONS`; `PolicySpecialist`/`EvalSpecialist`/`RouterSpecialist`
+are new, deliberately simpler single-call `Agent`s built specifically for
+this file, because a handoff target must be a single `Agent` — the three
+CLI tools above are two-step pipelines, not one, and stay completely
+untouched. Two real bugs found and fixed live while building this — the
+SDK's default handoff leaking the triage agent's own tool-call noise into
+a specialist's context, and a prior specialist's decline priming
+`KSORWorker` to skip searching an unrelated question — are recorded with
+their fixes in `docs/adr/005-triage-handoffs.md`. Session memory (its own
+`SQLiteSession`, `triage_sessions.db`) carries across a handoff: ask a
+refund question, then a completely different question in the same
+session, and the second specialist can still recall the first turn.
+
+Runs as an endpoint (`main.py` stays a 5-endpoint app) and, like the three
+CLI agents above, also standalone: `uv run python -m
+ksor_worker.triage_agent`.
 
 ## Setup
 
@@ -89,8 +124,8 @@ Edit `.env`:
 OPENAI_API_KEY=sk-...
 ```
 
-Every agent that touches KSOR (`/ask`, `/refund`, and all three CLI
-agents) needs a running KSOR MCP server (defaults to
+Every agent that touches KSOR (`/ask`, `/refund`, `/chat`, `/triage`, and
+all four CLI agents) needs a running KSOR MCP server (defaults to
 `http://127.0.0.1:8080/mcp`, overridable with `MCP_URL`) — that's `ksor
 serve` in the separate `handbook` repo.
 
@@ -116,16 +151,21 @@ curl -X POST localhost:8000/compare \
 curl -X POST localhost:8000/refund \
   -H 'content-type: application/json' \
   -d '{"query": "If a customer returns a product, what happens to my commission?"}'
-```
 
 curl -X POST localhost:8000/chat \
   -H 'content-type: application/json' \
   -d '{"query": "If a customer returns a product, what happens to my commission?"}'
+
+curl -X POST localhost:8000/triage \
+  -H 'content-type: application/json' \
+  -d '{"query": "mera refund kab aayega"}'
+# {"answer": "...", "routed_to": "RefundSpecialist", ...}
 ```
 
-`/refund` and `/chat` both return a `session_id` in their response — send
-that same id back on the next call to continue the conversation with real
-memory (the two endpoints keep separate histories even for the same id):
+`/refund`, `/chat`, and `/triage` each return a `session_id` in their
+response — send that same id back on the next call to continue the
+conversation with real memory (all three keep separate histories even for
+the same id):
 
 ```sh
 curl -X POST localhost:8000/chat \
@@ -133,12 +173,13 @@ curl -X POST localhost:8000/chat \
   -d '{"query": "And how do I source good product images?", "session_id": "<id from the previous response>"}'
 ```
 
-The three CLI agents run the same way, each its own process:
+The four CLI agents run the same way, each its own process:
 
 ```sh
 uv run python -m ksor_worker.eval_agent
 uv run python -m ksor_worker.policy_agent
 uv run python -m ksor_worker.router_agent
+uv run python -m ksor_worker.triage_agent
 ```
 
 **Try the domain split**: ask `/ask` a refund question — it declines and

@@ -114,3 +114,35 @@
 | 83 | `handbook`: CORS re-confirmed live for `/chat` specifically             | done |
 | 84 | Docs updated: `CLAUDE.md`, `spec.md`, `README.md` (ksor-worker); `AGENTS.md` (handbook) | done |
 | 85 | Commit + push both repos                                               | done |
+
+## Triage agent — real SDK handoffs, `/triage`, widget toggle (this pass)
+
+| # | Task                                                                   | Status |
+|---|----------------------------------------------------------------------|--------|
+| 86 | User asked for a real orchestration layer: one triage agent, SDK `handoffs`, hands off to 5 specialists — not an if/else | done |
+| 87 | Confirmed real SDK handoff API against the installed `openai-agents` version before writing code | done |
+| 88 | **Architectural mismatch found**: a handoff target must be a single `Agent`; `eval_agent.py`/`policy_agent.py`/`router_agent.py` are 2-step pipelines, not Agents — resolved by building new, simpler single-call specialist Agents for triage specifically, CLI tools untouched (ADR-005) | done |
+| 89 | `src/ksor_worker/triage_agent.py`: `KSORWorker`/`RefundSpecialist` (reuse existing `INSTRUCTIONS`) + `PolicySpecialist`/`EvalSpecialist`/`RouterSpecialist` (new) + `TriageAgent`, `run_triage_agent()`, own `triage_sessions.db` | done |
+| 90 | `models.py`: `TriageRequest`/`TriageResponse` (incl. `routed_to`)      | done |
+| 91 | `main.py`: `POST /triage`, same 502/500 shape as other endpoints      | done |
+| 92 | **Bug found live**: default handoff leaks the triage agent's own tool-call/output into the specialist's context — derailed `RefundSpecialist`'s domain check 3/3 for a plain in-domain question | done |
+| 93 | **Fix**: every specialist wrapped in `handoff(agent, input_filter=handoff_filters.remove_all_tools)`; re-verified 3/3 | done |
+| 94 | **Bug found live**: `EvalSpecialist` invented non-spec verdict words (`ABSTAINED`, `UNVERIFIED`) instead of the 3 fixed tokens | done |
+| 95 | **Fix**: prompt now states the 3-token constraint negatively as well as positively; re-verified 3/3 | done |
+| 96 | **Bug found live**: `RouterSpecialist` declined a valid model-selection question ~2/3 of the time, reading its own embedded task description as "too vague" | done |
+| 97 | **Fix**: prompt clarified that the query itself is the task, however phrased; re-verified 3/3 | done |
+| 98 | **Bug found live**: a prior specialist's DECLINE text (not tool-call noise) can prime `KSORWorker`'s next turn to skip searching and self-decline an unrelated, in-scope question — reproduced with plain `Agent`+`Runner.run()`, no triage machinery, confirming it's a `common.INSTRUCTIONS`+history property, not a handoff bug | done |
+| 99 | Prompt-only fix attempted first (a note telling `KSORWorker` to disregard unrelated prior declines) — did not work reliably | done |
+| 100 | **Fix**: `tool_choice="required"` on `KSORWorker` specifically inside `triage_agent.py` only (not touched in `common.py`/`worker.py`, and not applied to `RefundSpecialist`, whose decline-without-searching is by design) — re-verified 3/3 clean at realistic (paced) turn spacing | done |
+| 101 | **Found, documented, not fixed (pre-existing, out of scope)**: `refund_agent.py`'s own domain check is inconsistent on Roman Urdu phrasing, reproduced identically on the unmodified `/refund` endpoint with no triage involved | done |
+| 102 | **Found, documented, not fixed (pre-existing, out of scope)**: `common.INSTRUCTIONS`-based agents occasionally answer from general/pretrained knowledge instead of abstaining when the record has no matching content (e.g. order-cancellation steps not in `refund-policy.md`) — a grounding leak predating this session's work, confirmed by grepping the source document | done |
+| 103 | `triage_agent.py` given its own `_cli()`/`__main__` (`uv run python -m ksor_worker.triage_agent`), matching the eval/policy/router precedent | done |
+| 104 | `docs/adr/005-triage-handoffs.md` (new) — architecture, all bugs above with evidence and fixes | done |
+| 105 | Verified live: all 5 routing rules × 3 (user's 4 example queries + a 5th router case), each checked against expected `routed_to` | done |
+| 106 | Verified live: session memory carries across a handoff (turn 2, routed to a different specialist than turn 1, correctly recalled turn 1's content) | done |
+| 107 | Verified live: `/ask`, `/compare`, `/chat`, `/refund` unaffected (regression) | done |
+| 108 | CI smoke test (`tests/test_health.py` via `uv run --group dev python tests/test_health.py`) passes with `/triage` wired in | done |
+| 109 | `handbook`: `assistant-widget.tsx` — General/Smart Triage toggle, separate session id + message history per mode (matching the backend's separate session DBs), "Routed to: X" caption under each Smart Triage reply | done |
+| 110 | `handbook`: `tsc --noEmit` clean; dev server hot-reloaded with no compile errors; homepage still serves 200 | done |
+| 111 | Docs updated: `CLAUDE.md`, `spec.md`, `README.md`, `tasks.md`, `progress.md` (ksor-worker) | in progress |
+| 112 | Commit + push both repos                                               | pending |
