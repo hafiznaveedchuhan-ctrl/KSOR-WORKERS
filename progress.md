@@ -1,5 +1,46 @@
 # Progress — ksor-worker
 
+## 2026-09-22 (later) — Live end-to-end confirmation with the user, both surfaces
+
+After the build below, confirmed live with the user watching (not just
+claimed): `POST /triage {"query": "KSOR kya hai"}` → `TriageAgent` →
+handoff → `KSORWorker` → real Neon/pgvector search via `ksor serve` →
+correct, grounded answer, `routed_to: "KSORWorker"`. Full pipeline proven
+working end-to-end at the moment of testing.
+
+Also surfaced live, again: `{"query": "mera refund kab aayega"}` routes
+correctly to `RefundSpecialist` (`routed_to` correct) but the answer text
+hit the already-documented pre-existing Roman-Urdu inconsistency in
+`refund_agent.py`'s own domain check (declined instead of answering) —
+shown to the user as-is, not hidden. Same known gap as ADR-005 records;
+still not fixed here, still out of scope, still reproduces identically on
+the unmodified `/refund` endpoint with no triage involved.
+
+Gave the user 5 ready-made test queries (one per specialist) for the
+standalone CLI (`uv run python -m ksor_worker.triage_agent`):
+`"KSOR kya hai"` → KSORWorker; `"If a customer returns a product, what
+happens to my commission?"` → RefundSpecialist; `"mera phone number
+0300-1234567 hai, help karo"` → PolicySpecialist; `"Can you check if this
+is grounded: product hunting means finding trending products"` →
+EvalSpecialist; `"Which AI model should I use for a complex multi-step
+reasoning task?"` → RouterSpecialist. Confirmed with the user: running
+`triage_agent.py` alone is sufficient for testing — no need to separately
+invoke `worker.py`/`refund_agent.py`/`eval_agent.py`/`policy_agent.py`/
+`router_agent.py`, since `triage_agent.py` hands off to equivalents of all
+of them internally (the CLI tools remain useful standalone for their own,
+slightly more thorough behavior — e.g. `eval_agent.py`'s separate judge
+call vs `EvalSpecialist`'s single-call self-check — but are not required
+to exercise the same ground through triage).
+
+Clarified for the record, since it came up repeatedly: `/chat` (General)
+and `/triage` (Smart Triage) both answer from the same KSOR record via
+Neon — the difference is NOT "general questions vs KSOR questions."
+`/chat` is one agent with no handoff and no specialist behavior at all
+(no PII redaction, no groundedness self-check, no model advice — it just
+answers everything itself). `/triage` is the only path that hands off,
+and each specialist it can reach has genuinely different behavior for its
+category, not merely a different label.
+
 ## 2026-09-22 — Triage agent built: real SDK handoffs, `/triage`, widget toggle
 
 The pending task from the 2026-09-21 handoff (below) is done. Built
