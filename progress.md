@@ -1,5 +1,115 @@
 # Progress — ksor-worker
 
+## 🔴 SESSION HANDOFF (2026-09-21, latest) — read this before doing anything
+
+Context window was filling up mid-task; the user is about to `/clear` and
+start a fresh session. **This section is written so a brand-new AI session
+with zero conversation memory can pick up exactly where this one stopped —
+read this, then `spec.md`/`CLAUDE.md`/`docs/adr/`, before touching code.**
+
+### What exists right now (all pushed, CI green, fully working)
+
+**Two repos, deliberately separate** (npm vs uv, no shared repo):
+- `handbook` — the KSOR knowledge record (Next.js/Fumadocs site + `ksor
+serve` MCP server). GitHub: `hafiznaveedchuhan-ctrl/KSOR-HANDBOOK`.
+- `ksor-worker` (this repo) — Python/uv, OpenAI Agents SDK. GitHub:
+  `hafiznaveedchuhan-ctrl/KSOR-WORKERS`.
+
+**`ksor-worker` currently has 4 live HTTP endpoints** (`main.py`,
+`uv run uvicorn main:app --port 8000`):
+- `POST /ask` — grounded, KSOR-scoped, **excludes** refund questions
+  (redirects) — `worker.py`.
+- `POST /compare` — no tools, answers anything, ungrounded — `compare.py`.
+- `POST /refund` — grounded, refund/returns **only**, has memory
+  (`SQLiteSession`, `refund_sessions.db`) — `refund_agent.py`.
+- `POST /chat` — grounded, **no topic split at all** (refunds included),
+  has memory (`general_sessions.db`) — `general_agent.py`. **This is what
+  the `handbook` site's widget (`assistant-widget.tsx`) actually calls.**
+
+**Plus 3 standalone CLI-only tools** (not HTTP, `uv run python -m
+ksor_worker.<name>`): `eval_agent.py` (answer + groundedness judge),
+`policy_agent.py` (PII detection/anonymization), `router_agent.py`
+(gpt-4o-mini vs gpt-4o routing).
+
+**`common.py`'s `INSTRUCTIONS`** (the base KSOR-scoped prompt several
+agents reuse) has **NO refund-related clause** — that was tried, caused a
+real bug (declined unrelated questions), removed. `is_refund_related()` +
+`REFUND_DECLINE_MESSAGE` in `common.py` are the *sole*, code-level
+enforcement of `/ask`'s refund exclusion. Full story:
+`docs/adr/003-refund-agent-memory.md`. **Never re-add a refund clause to
+`common.INSTRUCTIONS`.**
+
+**Real bugs found and fixed this session** (don't reintroduce them):
+1. SDK's MCP tool-call timeout defaults to 5s, too short — fixed with
+   `MCP_TIMEOUT_SECONDS = 30` in `common.py`.
+2. Prompt-only refund-exclusion was unreliable in *both* directions
+   (answered refund questions directly; separately, declined totally
+   unrelated questions) — fixed by removing the prompt clause entirely and
+   using `is_refund_related()` as the sole gate.
+3. `refund_agent` fabricated a citation URL not in any source, 3/3
+   reproducible — fixed with an explicit "never invent a URL" instruction
+   in the shared prompt.
+4. Abstention wording was inconsistent (sometimes read as a temporary
+   outage) — fixed with an exact-wording instruction.
+5. `ksor build`/`ingest --flip` can silently NOT activate a new generation
+   (no error, just no delta/confirmation line printed) — if a flip doesn't
+   print `FLIPPED active generation -> N`, assume it didn't take and
+   re-run.
+
+### 🎯 THE PENDING TASK — not started yet, full plan already written
+
+**User wants a triage/orchestration agent** — one entry point that
+receives every query and hands it off to the right specialist, using the
+**real OpenAI Agents SDK `handoffs` mechanism** (`Agent(handoffs=[...])`,
+`Runner.run()` → `result.final_output` + `result.last_agent.name`), not a
+fake if/else pretending to be one.
+
+**The full, approved implementation plan is written at**
+`/home/naveed/.claude/plans/create-a-new-knowledge-parsed-pearl.md` — a
+fresh session should read that file in full before starting. Summary:
+
+- New `src/ksor_worker/triage_agent.py`: 5 specialist `Agent` objects
+  (`KSORWorker`, `RefundSpecialist`, `PolicySpecialist`, `EvalSpecialist`,
+  `RouterSpecialist`) wired into one `TriageAgent` via `handoffs=[...]`.
+  `run_triage_agent(query, session_id) -> (answer, routed_to)`, own
+  `SQLiteSession` (`triage_sessions.db`).
+- **Key finding already made, don't re-derive it**: a handoff target must
+  be a single `Agent` instance. `eval_agent.py`/`policy_agent.py`/
+  `router_agent.py` are 2-step Python pipelines, not single agents, so
+  they **cannot** be handed off to as-is. Resolved by building NEW,
+  single-call versions of those three roles *inside* `triage_agent.py`
+  (self-critique instead of a separate judge; redact-then-answer in one
+  call; advice-only for model routing) — the original 3 standalone CLI
+  tools stay **completely untouched**. This is recorded as
+  `docs/adr/005-triage-handoffs.md` (not yet written — part of the plan).
+- New `POST /triage` in `main.py`, `TriageRequest`/`TriageResponse` in
+  `models.py` (includes `routed_to`).
+- `handbook` widget gets a small General/Smart-Triage toggle, showing
+  "Routed to: X" under each reply in triage mode.
+- A judge-style verification pass is required before calling this done:
+  the user's 4 example queries (refund/general/PII/hallucination-check)
+  each checked against their expected `routed_to`, repeated 2-3× each for
+  consistency (temperature=0 alone hasn't been a full guarantee this
+  session — verify, don't assume), plus memory across a handoff, plus
+  regression-checking `/ask`/`/refund`/`/chat`/`/compare` still work.
+
+**Nothing from this plan has been built yet** — no `triage_agent.py`
+exists, no `/triage` route, no widget toggle. A fresh session's first real
+action should be: re-enter Plan Mode is not required (the plan is already
+approved — `ExitPlanMode` was accepted), just start Phase 1 of that
+plan's file list, testing live as you go, the same rigor as every fix
+above (curl-tested before claiming anything works, not assumed).
+
+### Local dev — 3 processes, likely all stopped if this is a fresh session
+
+```sh
+# in handbook/
+npm run dev      # site :3000
+npm run serve    # ksor serve MCP :8080  (needs .env: KSOR_AUTH=disabled-local etc.)
+# in ksor-worker/
+uv run uvicorn main:app --port 8000
+```
+
 ## 2026-09-16 — Initial build
 
 Built per plan.md: uv project init, deps (`openai-agents`, `python-dotenv`),
