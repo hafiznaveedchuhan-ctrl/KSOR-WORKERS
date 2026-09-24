@@ -272,4 +272,6 @@ Non-goals and rule 6 in `CLAUDE.md`).
 No CLI mode (removed — `worker.py`/`compare.py` are library functions only,
 no `input()` anywhere). No multi-turn memory beyond a single request, no
 persistence, no authentication, no database/session storage, no
-Dockerfile/Azure/Render config yet — all explicitly future phases.
+Dockerfile/Azure/Render config yet — all explicitly future phases. Narrow
+exception: `audit_log.db`, the append-only refund-approval audit table
+(`refund_gate.py`, ADR 006).

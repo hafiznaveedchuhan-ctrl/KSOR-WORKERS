@@ -5,6 +5,7 @@ from agents import AgentsException
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+import inngest.fast_api
 from mcp.shared.exceptions import MCPError
 
 from ksor_worker.common import ALLOWED_ORIGINS, REFUND_DECLINE_MESSAGE, is_refund_related
@@ -21,6 +22,8 @@ from ksor_worker.models import (
     TriageResponse,
 )
 from ksor_worker.refund_agent import run_refund_agent
+from ksor_worker.refund_gate import client as inngest_client
+from ksor_worker.refund_gate import refund_approval_gate
 from ksor_worker.triage_agent import run_triage_agent
 from ksor_worker.worker import run_grounded
 
@@ -37,6 +40,10 @@ app.add_middleware(
     allow_methods=["POST"],
     allow_headers=["content-type"],
 )
+
+# Serves /api/inngest so the Inngest dev server (or cloud) can run the
+# refund approval gate — see docs/adr/006-refund-approval-gate.md.
+inngest.fast_api.serve(app, inngest_client, [refund_approval_gate])
 
 
 @app.get("/health")

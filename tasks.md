@@ -146,3 +146,17 @@
 | 110 | `handbook`: `tsc --noEmit` clean; dev server hot-reloaded with no compile errors; homepage still serves 200 | done |
 | 111 | Docs updated: `CLAUDE.md`, `spec.md`, `README.md`, `tasks.md`, `progress.md` (ksor-worker) | in progress |
 | 112 | Commit + push both repos                                               | pending |
+
+## Refund human-approval gate — Domain 4 (this pass)
+
+| # | Task | Status |
+|---|---|---|
+| 113 | `inngest` added (`uv add`, `uv.lock` regenerated); Inngest client defaults to dev mode unless `INNGEST_SIGNING_KEY` is set so the app still boots without new env vars | done |
+| 114 | `refund_gate.py` (new): `refund-approval-gate` function (`step.run` notify → `step.wait_for_event` on `request_id`, 24h → 3 branches), `request_refund` tool, `audit_log.db` writer (idempotent) | done |
+| 115 | `RefundSpecialist` given the `request_refund` tool + submission instructions; `remove_all_tools` handoff filter kept, no `tool_choice="required"` | done |
+| 116 | `main.py` serves `/api/inngest`; `.env.example` gets `REFUND_GATE_THRESHOLD` (+ optional timeout) | done |
+| 117 | Verified live (Inngest dev server): 6000 PKR request suspends with "Approval needed…" log; wrong-`request_id` decision does not wake it; `approved:true` → one `refund_issued`; `approved:false` → `refund_blocked`, no `refund_issued`; 10s timeout → `escalated_timeout` | done |
+| 118 | `tests/test_refund_gate.py` + CI step; README "Human Gate" section; ADR 006; CLAUDE.md rule 8 / spec.md Non-goals amended | done |
+| 119 | Verified live via `/triage` (real LLM + KSOR MCP): 6000 PKR → `RefundSpecialist` calls `request_refund`, replies "pending, not issued", no audit row; 1000 PKR → issued directly; approve/reject decision events then produce `refund_issued` / `refund_blocked`; missing amount → asks for it, no row; KSOR question still → `KSORWorker` | done |
+| 120 | Commit + push | pending |
+

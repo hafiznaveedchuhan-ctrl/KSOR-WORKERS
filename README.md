@@ -107,6 +107,50 @@ Runs as an endpoint (`main.py` stays a 5-endpoint app) and, like the three
 CLI agents above, also standalone: `uv run python -m
 ksor_worker.triage_agent`.
 
+## Human Gate — refunds >= 5000 PKR wait for a person
+
+`RefundSpecialist` has one action tool, `request_refund(request_id, amount)`
+(`refund_gate.py`). Below `REFUND_GATE_THRESHOLD` (default `5000`, PKR) it
+issues straight away. At or above it, it fires `refund/approval.requested` and
+tells the customer the refund is **pending, not issued**. An Inngest function
+then suspends on `step.wait_for_event` for up to 24 hours — no polling loop, no
+open request — until a human sends `refund/approval.decided`:
+
+| Decision event | Result | `audit_log.db` row |
+|---|---|---|
+| `approved: true` | refund issued (simulated — no payment system here) | `refund_issued` |
+| `approved: false` (or anything but `true`) | refund blocked, rejection message | `refund_blocked` |
+| no event in 24h | escalated | `escalated_timeout` |
+
+The decision is matched to the request by `request_id` (not customer id).
+Design and limits: `docs/adr/006-refund-approval-gate.md`.
+
+**Test it** (no OpenAI key needed — events are sent straight to Inngest):
+
+```sh
+# terminal 1 — the app (Inngest runs in dev mode unless INNGEST_SIGNING_KEY is set)
+uv run uvicorn main:app --port 8000
+# terminal 2 — the Inngest dev server + UI at http://localhost:8288
+npx inngest-cli@latest dev -u http://127.0.0.1:8000/api/inngest
+
+# terminal 3 — a 6000 PKR request; terminal 1 prints "Approval needed for request r1: amount 6000 PKR"
+curl -X POST http://localhost:8288/e/test -H 'content-type: application/json' \
+  -d '{"name":"refund/approval.requested","data":{"request_id":"r1","amount":6000}}'
+
+# approve it ...
+curl -X POST http://localhost:8288/e/test -H 'content-type: application/json' \
+  -d '{"name":"refund/approval.decided","data":{"request_id":"r1","approved":true}}'
+# ... or reject a different request instead: request_id "r2", "approved": false
+
+sqlite3 audit_log.db "select request_id, action, detail from audit_log"
+```
+
+Expect `r1 | refund_issued` after approving, and `r2 | refund_blocked` (and no
+`refund_issued` for `r2`) after rejecting. To see the timeout branch without
+waiting a day, start the app with `REFUND_GATE_TIMEOUT_SECONDS=10` and send a
+request nobody answers: it ends as `escalated_timeout`. Unit tests (no
+servers): `uv run --group dev python tests/test_refund_gate.py`.
+
 ## Setup
 
 Requires [uv](https://docs.astral.sh/uv/) and Python 3.12.
@@ -198,6 +242,9 @@ memory whichever topic you ask about next.
 | `OPENAI_API_KEY` | yes | — | OpenAI API access for every agent |
 | `MCP_URL` | no | `http://127.0.0.1:8080/mcp` | where the KSOR-connected agents look for the MCP server |
 | `ALLOWED_ORIGINS` | no | `http://localhost:3000` | comma-separated origins `/refund` and `/chat` accept browser requests from (the `handbook` site's widget) |
+| `REFUND_GATE_THRESHOLD` | no | `5000` | refund amount (PKR) at or above which a human must approve |
+| `REFUND_GATE_TIMEOUT_SECONDS` | no | `86400` | how long the gate waits for a decision before escalating |
+| `INNGEST_SIGNING_KEY` / `INNGEST_EVENT_KEY` | production only | — | unset = Inngest dev mode (local dev server); set both for Inngest Cloud |
 
 ## Project layout
 
@@ -212,13 +259,17 @@ src/ksor_worker/
 ├── compare.py         # run_ungrounded() — /compare, its own unrestricted prompt
 ├── refund_agent.py    # run_refund_agent() — /refund, its own prompt + SQLiteSession memory
 ├── general_agent.py    # run_general_agent() — /chat, common.INSTRUCTIONS, no refund gate, own SQLiteSession
+├── triage_agent.py     # run_triage_agent() — /triage, 5 specialists via SDK handoffs
+├── refund_gate.py      # request_refund tool + Inngest approval gate + audit_log.db writer
 ├── eval_agent.py       # run_eval_agent() — CLI: answer + groundedness judge
 ├── policy_agent.py     # run_policy_agent() — CLI: PII detection + anonymized answer
 └── router_agent.py     # run_router_agent() — CLI: complexity-based model routing
 tests/test_health.py    # CI smoke test (FastAPI TestClient, no secrets needed)
+tests/test_refund_gate.py  # gate tool + audit log unit test (no secrets, no Inngest server)
 docs/adr/                # 001: why the OpenAI Agents SDK; 002: why FastAPI;
 │                         # 003: refund memory + the domain-split reliability saga;
 │                         # 004: why eval/policy/router are CLI-only, no new KSOR content
+│                         # 005: triage handoffs; 006: refund approval gate + audit log
 spec.md          # full technical spec
 plan.md          # build phases
 tasks.md         # task tracker

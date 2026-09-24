@@ -32,3 +32,9 @@ jobs:
       # (see README.md), not in CI.
       - name: Smoke test (GET /health)
         run: uv run --group dev python tests/test_health.py
+
+      # Also needs no key and no Inngest server: the refund gate's tool and
+      # audit-log logic with the event send stubbed. The live approve/reject/
+      # timeout flow needs the Inngest dev server (see README, "Human Gate").
+      - name: Unit test (refund gate)
+        run: uv run --group dev python tests/test_refund_gate.py

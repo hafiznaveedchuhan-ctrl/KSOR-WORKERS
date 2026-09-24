@@ -88,9 +88,11 @@ it's on disk.
 8. **Session/conversation memory is deliberately in scope for
    `refund_agent.py` and `general_agent.py` specifically** (the SDK's own
    `SQLiteSession`) — this is an intentional exception to "no database,"
-   not a reversal of it. No Dockerfile, no Azure/Render config, no user
-   database, no auth — all still explicitly future phases (see spec.md's
-   Non-goals). Don't add those speculatively.
+   not a reversal of it. The one other exception is `audit_log.db`, the
+   append-only refund-approval audit table (`refund_gate.py`, ADR 006). No
+   Dockerfile, no Azure/Render config, no user database, no auth — all
+   still explicitly future phases (see spec.md's Non-goals). Don't add
+   those speculatively.
 9. **Not every new agent needs new knowledge-base content.**
    `eval_agent`/`policy_agent`/`router_agent` are infrastructure/governance
    layers over the *existing* record, not new business domains — none of

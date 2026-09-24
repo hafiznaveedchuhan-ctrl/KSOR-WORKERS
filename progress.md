@@ -807,3 +807,53 @@ skips the gate; rule 4/6/8 extended to cover `general_agent.py`/
 `ChatResponse`, updated Goal/Components), `README.md` (four-endpoint
 table, `/chat` examples, project layout), and `handbook/AGENTS.md` (the
 widget note now names `/chat` specifically, not `/ask`+`/refund`).
+
+## 2026-09-24 — Domain 4: human approval gate for large refunds
+
+**Premise correction first.** The brief assumed Inngest, a
+`refund_specialist.py`, `request_id`/`amount` fields and an `audit_log`
+already existed. None did: no `inngest` dependency, `RefundSpecialist` was an
+inline `Agent` in `triage_agent.py` with read-only KSOR tools (it could not
+issue refunds), and there was no audit table. Built from scratch after
+confirming with the owner: trigger = a `request_refund` function tool on
+`RefundSpecialist`; audit = SQLite `audit_log.db`; issuing = simulated.
+
+**Built.** `refund_gate.py`: Inngest function `refund-approval-gate`
+(`refund/approval.requested` → notify → `wait_for_event("refund/approval.decided",
+if_exp on request_id, 24h)` → `refund_issued` / `refund_blocked` /
+`escalated_timeout`), the tool, and an idempotent audit writer
+(`UNIQUE(request_id, action)` + `INSERT OR IGNORE`). Approval is fail-closed
+(only literal `true`). ADR 006 records the decisions and the rule 8 exception.
+
+**Bug caught by running it, not by inspection.** First `import main` after wiring
+`inngest.fast_api.serve` raised `SigningKeyMissingError`: with neither
+`INNGEST_DEV` nor a signing key the SDK refuses to build the handler, which
+would have taken down `/health`, `/ask` and `/chat` (and CI) for anyone without
+the new env var. Fix: `is_production=bool(INNGEST_SIGNING_KEY)`, so the default
+is dev mode. Also: `step.run` needs an async handler.
+
+**Verified live** against `npx inngest-cli dev` (real run, real SQLite file):
+- 6000 PKR request → console `Approval needed for request r-approve: amount 6000 PKR`,
+  run suspended, no audit row while waiting.
+- a decision for a *different* request_id did not wake the run (`if_exp` works).
+- `approved:true` → exactly one `refund_issued` row.
+- 7500 PKR + `approved:false` → `refund_blocked` row with the rejection message,
+  zero `refund_issued` rows for that id.
+- `REFUND_GATE_TIMEOUT_SECONDS=10`, no decision → `escalated_timeout` row.
+- `tests/test_refund_gate.py` and `tests/test_health.py` pass.
+
+**Agent-level verification (same day, real LLM + KSOR MCP).** `/triage` "process
+refund LLM-BIG-1, 6000 PKR" → `routed_to: RefundSpecialist`, answer "pending
+human approval and has not been issued yet", no audit row, console showed the
+gate log. "LLM-SMALL-1, 1000 PKR" → issued directly (`auto-approved below
+threshold`). Decision events then gave `refund_issued` (BIG-1, approve) and
+`refund_blocked` (BIG-2, 8000 PKR, reject). "Refund LLM-X" with no amount → asked
+for the amount, zero rows. A general niche question still routes to `KSORWorker`.
+
+**Pre-existing, not caused by this change:** "What is the return window for
+products?" routes to `KSORWorker`, not `RefundSpecialist`, 3/3. Reproduced
+identically on the unmodified HEAD code (run from a `git archive` copy), so the
+triage prompt's behaviour is unchanged by the gate. Known limits (rejection message is not pushed into the
+closed chat turn; no approver authentication; browser approve button needs CORS
+changes) are in ADR 006.
+

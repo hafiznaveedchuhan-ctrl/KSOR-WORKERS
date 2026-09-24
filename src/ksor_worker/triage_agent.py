@@ -28,6 +28,21 @@ from mcp.shared.exceptions import MCPError
 
 from ksor_worker.common import INSTRUCTIONS, MCP_TIMEOUT_SECONDS, MCP_URL, MODEL
 from ksor_worker.refund_agent import INSTRUCTIONS as REFUND_INSTRUCTIONS
+from ksor_worker.refund_gate import request_refund
+
+# Appended to refund_agent.INSTRUCTIONS for RefundSpecialist only — the
+# standalone /refund agent stays policy-Q&A-only. Deliberately not paired with
+# tool_choice="required" (that made specialists skip declines; see ADR 005).
+REFUND_SUBMISSION_INSTRUCTIONS = (
+    "\n\nEXCEPTION to the topic check above: if the customer asks you to "
+    "submit or process a refund AND gives both a request id and an amount in "
+    "PKR, call the request_refund tool with exactly those values. Report "
+    "the tool's result to the customer as-is — if it says the refund is "
+    "pending human approval, say it is pending and has not been issued; "
+    "never tell the customer a refund was issued unless the tool says so. "
+    "If the request id or amount is missing, ask for it instead of "
+    "guessing."
+)
 
 # Runtime state, not source — see .gitignore. Separate from
 # refund_sessions.db/general_sessions.db, same reasoning as those two: a
@@ -151,10 +166,11 @@ async def run_triage_agent(query: str, session_id: str) -> tuple[str, str]:
         )
         refund_specialist = Agent(
             name="RefundSpecialist",
-            instructions=REFUND_INSTRUCTIONS,
+            instructions=REFUND_INSTRUCTIONS + REFUND_SUBMISSION_INSTRUCTIONS,
             model=MODEL,
             model_settings=ModelSettings(temperature=0),
             mcp_servers=[ksor_server],
+            tools=[request_refund],
             handoff_description=(
                 "Refunds, returns, cancellations, commission reversal"
             ),
