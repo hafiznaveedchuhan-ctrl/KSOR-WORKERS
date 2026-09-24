@@ -34,7 +34,7 @@ dev deps in a group") is followed in spirit: uv is the only tool, and eval-only 
 
 ## Decision: deterministic graders are the gate; the LLM judge is advisory until calibrated
 Exact strings, routing, URL allowlist, verdict tokens, audit-log rows, length limits and latency are checked without an LLM.
-DeepEval (relevancy, faithfulness, hallucination, a custom scope/honesty GEval) and Ragas (context relevance/recall, faithfulness, answer
+DeepEval (relevancy, faithfulness, a custom scope/honesty GEval) and Ragas (context relevance/recall, faithfulness, answer
 correctness on chunks fetched straight from the MCP `search` tool) sit on top, with a judge model (`gpt-4o`) that differs from the agents'
 (`gpt-4o-mini`). Their bars start advisory: `scripts/calibrate_judge.py` implements the book's "grade the grader" protocol (20 deliberately
 mixed items, owner grades blind, four-cell table, false-pass count) and gating starts only after the owner has done it.
@@ -49,6 +49,20 @@ mixed items, owner grades blind, four-cell table, false-pass count) and gating s
    "wording close to" a different one. Abstention is therefore graded by rubric, not exact match. Flagged for the owner.
 3. **The retrieval abstention gate is off** (`instance.md` has no calibrated `retrieval:` block), so today abstention rests on prompts only.
 4. **`ragas 0.4.3` does not import** with the latest `langchain-community` (pinned in `evals/`).
+
+5. **Two real grounding leaks, reproduced on the owner's own queries:** "How do I cancel an order?" recites Amazon's "Your Orders -> Cancel
+   Items" steps 2 of 5 times; after a refund turn, "what's a good way to find trending products?" gets generic advice 3/3 although the served
+   record has none (the guidance is only in an unpublished draft). Both are tracked `known_failing`.
+6. **The deterministic layer alone is not enough:** in the calibration sample the agent answered "What is the 180-day rule?" by calling it the
+   commission holding period, and the keyword check passed it. Hence the judge layer and the owner's blind grading.
+7. **Judge bring-up findings:** `HallucinationMetric` (DeepEval 4.x, higher = better) gave a correct answer 0.2 and an invented one 0.0 with
+   multi-chunk retrieval context, so it is not used; `FaithfulnessMetric`, a scope/honesty `GEval`, and Ragas faithfulness / answer correctness
+   (which separated retrieval from grounding correctly) are. A `known_failing` case only counts as fixed when every repeat passes.
+
+## Results (first baseline, PROVISIONAL)
+82 cases x 3 repeats: 77 PASS, 0 FAIL, 0 ERROR; +13 real-traffic cases (2 real leaks found, 1 of my own cases corrected). Baseline: every category
+100% of graded active cases; 5 known_failing and 3 blocked_until_stable tracked apart. Mutation check: 4/4 offline and 3/3 live breakages caught,
+with clean controls. GitHub CI (offline evals included) green.
 
 ## Consequences / limits
 - Evals catch the failure modes we thought to test; novel questions, tone and long-conversation drift are outside them. Coverage grows by the

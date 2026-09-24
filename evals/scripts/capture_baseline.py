@@ -23,12 +23,25 @@ REPORTS = HERE / "reports"
 
 
 def merge(paths: list[Path]) -> dict[str, dict]:
+    """Later files override earlier ones per case. Case-level verdict/status/critical/category are recomputed from the raw
+    repeat verdicts against the CURRENT dataset, so a case whose status changed after the run (promoted, reclassified) is
+    judged by today's rules rather than the rules in force when it ran."""
+    sys.path.insert(0, str(HERE / "harness"))
+    import runner  # noqa: E402
+
+    current = {c.case_id: c for c in load()[0]}
     out: dict[str, dict] = {}
     for p in paths:
         for line in p.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                r = json.loads(line)
-                out[r["case_id"]] = r
+            if not line.strip():
+                continue
+            r = json.loads(line)
+            case = current.get(r["case_id"])
+            if case is not None:
+                reps = [runner.RepeatResult(i + 1, x["verdict"]) for i, x in enumerate(r["repeats"])]
+                r["verdict"] = runner.CaseResult(case, reps).verdict
+                r["status"], r["critical"], r["category"] = case.status, case.critical, case.category.value
+            out[r["case_id"]] = r
     return out
 
 

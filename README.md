@@ -180,6 +180,8 @@ Case statuses: `active` (gates), `known_failing` (a documented open bug; reporte
 promoted) and `blocked_until_stable` (the fact lives only in an unpublished draft doc; correct behavior today is to abstain). The bars are in
 `evals/docs/critical-metrics.md`. Verdicts keep infra `ERROR` (5xx, timeouts) apart from behavioral `FAIL`.
 
+**Baseline (provisional, 2026-09-24):** every category 100% of graded active cases over 3 repeats; 5 known-failing + 3 blocked-until-stable tracked apart; live mutation check 3/3 caught. Two real grounding leaks are open (cancellation steps, generic product-hunting advice) — see `progress.md`.
+
 **The first run already paid for itself:** it caught that this repo's own refund-gate change (ADR 006) made `RefundSpecialist` decline
 "When will I get my refund?" 6/6 (6/6 answered before the gate). The cause was a prompt addendum, not the tool; removing it fixed it (ADR 007).
 

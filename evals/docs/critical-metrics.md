@@ -19,7 +19,8 @@ A bar is a decision, not a discovery (book, "Trusting the Checker" §6). It is s
 
 Bars for AnswerRelevancy / Faithfulness / Hallucination / Ragas metrics are set **after** the judge is calibrated against the owner's blind
 grading (`scripts/calibrate_judge.py`) and a first baseline exists; until then they are reported, not gating. Starting points from the book,
-to be tightened as the agent improves (Pass-Threshold Inflation): relevancy >= 0.7, faithfulness >= 0.8, hallucination <= 0.3.
+to be tightened as the agent improves (Pass-Threshold Inflation): relevancy >= 0.7, faithfulness >= 0.8. (DeepEval's HallucinationMetric is not used: in 4.x it has
+the opposite direction to the book and gave no signal with multi-chunk retrieval context — see harness/judge.py.)
 
 ## What the suite honestly cannot tell you
 

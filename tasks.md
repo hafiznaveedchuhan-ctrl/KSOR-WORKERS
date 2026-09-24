@@ -174,12 +174,14 @@
 | 128 | `scripts`: `capture_baseline`, `check_regressions`, `calibrate_judge` (grade-the-grader), `mutation_check`, `build_kb_snapshot`, `run_live`, `validate_dataset` | done |
 | 129 | Mutation check (offline): 4/4 deliberate breakages caught (keywords emptied, threshold off-by-one, gate fails open, no amount validation); control clean | done |
 | 130 | **Regression found by the eval and fixed:** the ADR 006 prompt addendum made RefundSpecialist decline "When will I get my refund?" 6/6 (baseline 6/6 answered). A/B: addendum is the cause, not the tool; fix = remove it (tool-only 4/4 on all four behaviors) | done |
-| 131 | `judge.py`: DeepEval 4.x + Ragas 0.4.3 layer written against verified signatures; judge model != agent model | written, **not yet run against the API** |
+| 131 | `judge.py`: DeepEval 4.x + Ragas 0.4.3 layer written against verified signatures; judge model != agent model | done — run against the API (smoke test + 20 calibration items); HallucinationMetric dropped (no signal in DeepEval 4.x) |
 | 132 | ADR 007; README "Evals" section; CLAUDE.md rule 12; `.gitignore` for `evals/runs`, `.deepeval` | done |
-| 133 | Full live run, 3 repeats, all cases | **in progress** (46/82 cases at last look; 13 newer real-traffic cases still to run) |
-| 134 | Record the baseline (`capture_baseline.py`) — will be PROVISIONAL until the owner reviews the cases | pending (needs #133) |
-| 135 | Live mutation check (3 real prompt/handoff regressions, incl. the addendum) | pending |
+| 133 | Full live run, 3 repeats, all cases | done — 82 cases x3: 77 PASS, 0 FAIL, 0 ERROR; +13 real-traffic cases: found 2 real grounding leaks |
+| 134 | Record the baseline (`capture_baseline.py`) — will be PROVISIONAL until the owner reviews the cases | done — PROVISIONAL baseline recorded (`evals/reports/`), all categories 100% of graded active cases |
+| 135 | Live mutation check (3 real prompt/handoff regressions, incl. the addendum) | done — 3/3 caught (control 0/3, mutated 3/3) |
 | 136 | Owner: review every case (`reviewed_by`), decide `tr-return-window-routing` + `rw-human-approval-question` expectations | **pending — owner** |
 | 137 | Owner: blind-grade the 20-item judge calibration sheet; LLM-judge bars stay advisory until then | **pending — owner** |
 | 138 | Commit + push | done (see progress.md) |
+| 139 | Calibration sheet exported (20 mixed items) + judge run on them; owner grades still empty | done (owner half pending, #137) |
+| 140 | Real leaks reproduced and tracked: cancellation steps (2/5), generic product-hunting advice after a topic switch (3/3) — fixing them is a separate prompt change | open |
 

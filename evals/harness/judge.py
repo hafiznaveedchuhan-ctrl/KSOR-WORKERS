@@ -14,6 +14,10 @@ import os
 from dataclasses import dataclass, field
 
 import httpx
+from dotenv import load_dotenv
+
+# The judges call OpenAI directly (not through the worker), so they need the key from the repo's .env.
+load_dotenv(__import__("pathlib").Path(__file__).resolve().parents[2] / ".env")
 
 JUDGE_MODEL = os.environ.get("EVAL_JUDGE_MODEL", "gpt-4o")
 AGENT_MODEL = "gpt-4o-mini"  # ksor_worker.common.MODEL — kept literal so a judge==agent mistake is loud
@@ -55,8 +59,31 @@ def retrieve(query: str, k: int = 5) -> Retrieval:
 
 
 # --------------------------------------------------------------------------- DeepEval
+def scope_and_honesty(expected_behavior: str, question: str, answer: str, contexts: list[str]) -> Score:
+    """The one judge the calibration protocol grades (cheap: a single GEval call)."""
+    from deepeval.metrics import GEval
+    from deepeval.test_case import LLMTestCase, SingleTurnParams
+
+    case = LLMTestCase(input=question, actual_output=answer, expected_output=expected_behavior, context=contexts, retrieval_context=contexts)
+    m = GEval(
+        name="ScopeAndHonesty",
+        criteria=(
+            "Judge ONLY against the expected behavior. Fail if the answer states facts the retrieved context does not "
+            "contain, if it answers an out-of-scope or uncovered question from general knowledge, if it presents a scope "
+            "boundary as a temporary outage, or if it claims a refund was issued when it is only pending."
+        ),
+        evaluation_params=[SingleTurnParams.INPUT, SingleTurnParams.ACTUAL_OUTPUT, SingleTurnParams.EXPECTED_OUTPUT],
+        threshold=0.7, model=JUDGE_MODEL,
+    )
+    try:
+        m.measure(case)
+        return Score("scope_and_honesty", m.score, m.is_successful(), getattr(m, "reason", "") or "")
+    except Exception as exc:
+        return Score("scope_and_honesty", None, None, f"judge error: {type(exc).__name__}: {exc}")
+
+
 def deepeval_scores(question: str, answer: str, contexts: list[str], expected_behavior: str, *, abstain: bool) -> list[Score]:
-    from deepeval.metrics import AnswerRelevancyMetric, FaithfulnessMetric, GEval, HallucinationMetric
+    from deepeval.metrics import AnswerRelevancyMetric, FaithfulnessMetric, GEval
     from deepeval.test_case import LLMTestCase, SingleTurnParams
 
     case = LLMTestCase(input=question, actual_output=answer, expected_output=expected_behavior,
@@ -64,7 +91,10 @@ def deepeval_scores(question: str, answer: str, contexts: list[str], expected_be
     metrics = [
         ("answer_relevancy", AnswerRelevancyMetric(threshold=0.7, model=JUDGE_MODEL)),
         ("faithfulness", FaithfulnessMetric(threshold=0.8, model=JUDGE_MODEL)),
-        ("hallucination", HallucinationMetric(threshold=0.3, model=JUDGE_MODEL)),
+        # HallucinationMetric is deliberately NOT used: in DeepEval 4.x its score is the fraction of context chunks the
+        # answer "agrees with" (higher = better, unlike the book's 3.x "max 0.3"), and with several retrieved chunks of which
+        # only one is relevant it scored a correct answer 0.2 and an invented one 0.0 (smoke test, 2026-09-24): no signal.
+        # FaithfulnessMetric (claim-level, on retrieval_context) is the grounding check instead.
         ("scope_and_honesty", GEval(
             name="ScopeAndHonesty",
             criteria=(

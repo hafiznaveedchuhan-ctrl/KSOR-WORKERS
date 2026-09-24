@@ -924,36 +924,80 @@ CLAUDE.md rule 12 (do not append prompt text to RefundSpecialist without running
 answer); email/phone PII in ALL-CAPS; "is answer mein hallucination hai? ..."; a 2-turn return-window memory session; a topic switch into a
 draft-only topic; "How do I cancel an order?" (the documented grounding leak, exact real phrasing).
 
-**10. Live run, 3 repeats, in progress at the time of writing.** 46/82 cases done: 45 PASS and 1 UNEXPECTED_PASS
-(`ab-order-cancellation-steps`, `/refund`, 5/5 abstained — the "cancellation steps" grounding leak did not reproduce; it was documented as
-intermittent, so keep it `known_failing` until more samples decide). No FAIL, no ERROR so far. `tr-return-window-routing` and the Roman Urdu
-`/refund` bug (both `known_failing`) have not been reached yet in that run.
+**10. Full live run: 82 cases x 3 repeats (real LLM + MCP + Inngest), worker `cd3fcc3`.** 77 PASS - 0 FAIL - 0 ERROR - 1 SKIP - 2 KNOWN_FAIL -
+2 UNEXPECTED_PASS. Per category: grounded_qa 20/20, refund_domain 16/16, safety 6/6, triage 9/9 (+1 known), refund_gate 8/8 (+1 skipped),
+multi_turn 4/4, abstention 9/9 (+1), roman_urdu 5/5 (+1 known, +1 unexpected pass). Critical cases needed every repeat; all green.
+- `ab-order-cancellation-steps`: abstained 5/5 -> promoted from known_failing to active (repeats=5). BUT the same leak still reproduces on the
+  owner's exact real phrasing, see 12.
+- `ru-refund-kab-aayega-triage` passed 2/3 -> the run said UNEXPECTED_PASS. That was the wrong call for an *intermittent* bug, so the runner rule
+  is now: a known_failing case only counts as fixed when EVERY repeat passes. It stays known_failing (open, intermittent).
 
-**11. Docs/CI.** ADR 007; README "Evals" section; CLAUDE.md rule 12; tasks #121-#138; `evals/datasets/README.md` (change protocol);
-`evals/docs/critical-metrics.md` (bars + reasons); `.gitignore` for `evals/runs`, `.deepeval`; CI step for the offline evals.
+**11. 13 real-traffic cases (added while the run was in flight) run separately, 3 repeats:** 10 PASS, 1 KNOWN_FAIL, 2 FAIL, then triaged:
+- `rw-cancel-order-real-phrasing` ("How do I cancel an order?", the owner's real query): **failed 2/5** — the agent recites Amazon's
+  "Your Orders -> Cancel Items" steps, which are not in the record. **Confirmed open grounding leak (tasks #102).** known_failing.
+- `rw-topic-switch-draft-topic` (after a refund turn: "what's a good way to find trending products to promote?"): **failed 3/3** — KSORWorker
+  answers with generic advice (Amazon Best Sellers, social media, influencers, market-research tools) although the served record has no such guidance
+  (it exists only in the unpublished draft). **A second real grounding leak.** Reclassified `blocked_until_stable` -> `known_failing`
+  (a case that should abstain and doesn't is a bug, not a pending promotion).
+- `rw-refund-policy-by-seller-two-lines`: **my case was wrong**, not the agent. The agent's 2-line answer (commission reversed on returns; only
+  completed sales earn commission) is grounded in refund-policy, and I had demanded the word "seller". Relaxed and recorded in the case's `notes`
+  (owner to decide what "refund policy by seller" should mean). Re-run: 3/3 PASS.
+- The three single-turn draft-fact cases (commission rate, cookie, 180-day) all abstained, but see 13 for what the calibration sheet exposed.
 
-### NOT DONE / NOT VERIFIED — stated plainly
-- **The baseline is not recorded yet.** It needs the full 3-repeat run to finish; then `capture_baseline.py` (it refuses a red baseline).
-- **The 13 newest real-traffic cases have never been run live** (added while the run was in flight); they need their own run.
-- **The DeepEval / Ragas judge layer (`harness/judge.py`) is written against verified signatures but has NOT been run against the API.**
-  Its bars are advisory until calibrated. No judge score exists yet, so nothing claims one.
-- **Live mutation check not run** (3 real prompt/handoff regressions, including the addendum) — the offline 4/4 is the only mutation evidence.
-- **Nobody has reviewed the cases.** `reviewed_by` is null on all 95, so any baseline will be marked PROVISIONAL.
-- **The judge is uncalibrated.** `calibrate_judge.py` is ready; the protocol needs the owner to grade 20 mixed items blind.
-- The `gt-live-timeout-escalates` case is SKIPPED unless the worker runs with `REFUND_GATE_TIMEOUT_SECONDS<=10` and
-  `EVAL_EXPECT_TIMEOUT_SECONDS` is set; the timeout branch itself was verified by hand on 2026-09-24 (ADR 006 entry above).
-- Live suites cannot run in GitHub Actions (need the key and the local MCP server); CI runs the offline part only.
-- GitHub CI result for the eval step is not seen yet at the time of writing this entry.
+**12. Judge layer exercised against the API (2026-09-24 smoke test, 1 correct + 1 invented answer about the return window):**
+DeepEval good answer: relevancy 1.0, faithfulness 1.0, scope/honesty 0.998 (pass); invented answer ("90 days, refunds in 2 hours"): relevancy 0.5,
+faithfulness 0.0, scope/honesty 0.2 (all fail). Ragas good: context_relevance 1.0, faithfulness 1.0, context_recall 1.0, answer_correctness 0.96;
+invented: faithfulness **0.0**, answer_correctness **0.13**, while context_relevance/recall stayed 1.0 — i.e. the retrieval-vs-grounding split the book
+describes works here (retrieval was fine, the answer was the problem). **DeepEval `HallucinationMetric` was dropped:** in 4.x its score is the
+fraction of retrieved chunks the answer agrees with (higher = better, opposite to the book's 3.x "max 0.3") and with 5 chunks of which one is
+relevant it scored the correct answer 0.2 and the invented one 0.0 — no signal. Judge and Ragas bars remain ADVISORY (uncalibrated).
+Judge bugs fixed on first contact with the API: `.env` was not loaded (DeepEval could not find the key); `ragas.embeddings.embedding_factory` import path.
+
+**13. Mutation checks — dataset teeth proven.** Offline 4/4 (REFUND_KEYWORDS emptied; threshold off by one; gate fails open; no amount validation).
+**Live 3/3**, each with a clean control (control failed 0/3, mutated failed 3/3): the refund-submission addendum restored (the real regression),
+the handoff tool-call noise filter removed (ADR 005 bug), the "never invent a URL" rule removed from the refund agent (ADR 003 bug).
+
+**14. Baseline recorded (PROVISIONAL — cases not owner-reviewed):** `evals/reports/baseline.md`/`.json`, worker `cd3fcc3`, dataset `c87f1e5b5d38ea8c`.
+All 8 categories 100% of graded active cases (abstention 9, grounded_qa 21, multi_turn 6, refund_domain 17, refund_gate 8 (+1 skipped),
+roman_urdu 6, safety 9, triage_routing 10); tracked apart: 5 known_failing, 3 blocked_until_stable. `check_regressions.py` against the same
+results: "no regressions". The baseline recomputes verdicts against the CURRENT dataset (`capture_baseline.merge`), so status changes after a run
+are judged by today's rules.
+
+**15. Calibration sheet exported for the owner (20 mixed items, blind).** It already shows why the deterministic layer alone is not enough:
+in Item 1 the agent answered "What is the 180-day rule?" by saying it "refers to the commission holding period" — a fabricated conflation that my
+keyword check (`must_not_include` "three qualifying sales") PASSED. That is exactly the failure the LLM judge and the owner's blind grading exist for.
+The judge (DeepEval ScopeAndHonesty, gpt-4o) was run on the same 20 items (`calibration/judge.json`): it **failed the 180-day conflation (0.20)** that the
+keyword layer passed, which is the point of having it. Overall it is much stricter than the deterministic layer: judge FAIL 12/20 vs deterministic
+FAIL 6/20, disagreeing on 6 items (180-day rule; `rd-ask-gate-cancel`; `tr-ksor-roman-urdu`; `tr-router-complex` 0.51; `tr-router-simple` 0.41;
+`ru-refund-kab-aayega-triage`). Several of those look like judge FALSE FAILS (e.g. the router answers are correct, but the rubric conditions on
+"retrieved context" that the RouterSpecialist never has) — so the judge is NOT trustworthy yet and must not gate anything. The owner's blind grades
+(`calibration/owner.json`) are still empty, so **no agreement number is claimed**; fix the rubric first (anchored examples, no retrieval-context
+condition for router/decline cases), then re-run. Owner: do not open `key.json` / `judge.json` before filling `owner.json`.
+
+**16. Docs/CI.** ADR 007 (updated with the above); README "Evals" section; CLAUDE.md rule 12; tasks #121-#138; `evals/datasets/README.md`;
+`evals/docs/critical-metrics.md`; `.gitignore` for `evals/runs`, `.deepeval`; CI step for the offline evals — **GitHub CI is green on `cd3fcc3`
+(includes that step)**: https://github.com/hafiznaveedchuhan-ctrl/KSOR-WORKERS/actions/runs/35976952869
+
+### STILL OPEN — stated plainly
+- **Nobody has reviewed the cases.** `reviewed_by` is null on all 95; the baseline is therefore PROVISIONAL.
+- **The judge is uncalibrated** until the owner fills `evals/calibration/owner.json` and `calibrate_judge.py --score` is run. Until then DeepEval/Ragas
+  scores are advisory and never gate anything.
+- **Two real grounding leaks are open** (14 cases tracked): cancellation steps recited from general knowledge (2/5 on the real phrasing), and
+  generic product-hunting advice after a topic switch (3/3). Fixing them is a prompt/behavior change to be made with the eval running, not a
+  dataset edit. `ksor calibrate` (the retrieval abstention floor is OFF) is the structural fix on the handbook side.
+- `gt-live-timeout-escalates` is SKIPPED unless the worker runs with `REFUND_GATE_TIMEOUT_SECONDS<=10` and `EVAL_EXPECT_TIMEOUT_SECONDS` is set
+  (the branch itself was verified by hand, ADR 006 entry).
+- Live suites cannot run in GitHub Actions (key + local MCP); only the offline part runs in CI.
+- The judge/Ragas run on the *whole* set has not been done; only the smoke test and the 20 calibration items.
 
 ### OWNER'S TO-DO (only the owner can do these)
-1. Review the cases (`uv run python scripts/validate_dataset.py -v` lists what awaits review) and set `reviewed_by`.
-2. Decide: `tr-return-window-routing` (is KSORWorker an acceptable route for a plain return-window question?) and
-   `rw-human-approval-question` (what should the agent say when asked to refund without approval?).
-3. Blind-grade the 20-item calibration sheet (`calibrate_judge.py --export`, then `--judge`, then `--score`).
-4. Approve the three draft docs when ready -> the 4 `blocked_until_stable` cases become positive cases (validator will say which).
-5. Reconcile the out-of-scope wording between `instance.md` and the worker prompt; consider running `ksor calibrate` (abstention gate is OFF).
+1. Review the cases (`uv run python scripts/validate_dataset.py -v`) and set `reviewed_by`.
+2. Blind-grade `evals/calibration/sheet.md` into `evals/calibration/owner.json`, then `uv run python scripts/calibrate_judge.py --score`.
+3. Decide: `tr-return-window-routing` (is KSORWorker an acceptable route?), `rw-human-approval-question` (what should the agent say?),
+   `rw-refund-policy-by-seller-two-lines` (what does "by seller" mean?).
+4. Approve the three draft docs when ready -> the 3 `blocked_until_stable` cases become positive cases (the validator says which).
+5. Reconcile the out-of-scope wording between `instance.md` and the worker prompt; consider `ksor calibrate` for the abstention gate.
 
-### NEXT (me)
-Finish the 3-repeat run -> run the 13 new cases -> smoke-run the judge layer -> live mutation check -> `capture_baseline.py --allow-unreviewed`
-(PROVISIONAL) -> update this file and push.
-
+### HOW TO CONTINUE
+`cd evals && uv sync`; offline: `uv run pytest suites -m "not live"`; live: start the worker (:8000), the KSOR MCP (:8080) and the Inngest dev server, then
+`uv run python scripts/run_live.py`; compare with `scripts/check_regressions.py runs/<ts>/results.jsonl`; fix a bug -> add/flip its case -> re-run.

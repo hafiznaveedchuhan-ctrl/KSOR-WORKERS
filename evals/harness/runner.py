@@ -67,7 +67,8 @@ class CaseResult:
         need = n if self.case.critical else n // 2 + 1
         ok = c["PASS"] >= need
         if self.case.status == "known_failing":
-            return "UNEXPECTED_PASS" if ok else "KNOWN_FAIL"
+            # "fixed" means stably fixed: every repeat passes. An intermittent bug that passes 2 of 3 is still open.
+            return "UNEXPECTED_PASS" if c["PASS"] == n else "KNOWN_FAIL"
         return "PASS" if ok else ("ERROR" if c["ERROR"] else "FAIL")
 
 

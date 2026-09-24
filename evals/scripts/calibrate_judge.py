@@ -57,7 +57,7 @@ def export(paths: list[Path]) -> None:
 
     CAL.mkdir(exist_ok=True)
     sheet = ["# Judge calibration sheet — grade BLIND", "",
-             "For each item mark PASS or FAIL in `owner.json` using ONLY the rubric under it. Do not look at results files.", ""]
+             "For each item mark PASS or FAIL in `owner.json` using ONLY the rubric under it. Do not look at results files, and do NOT open `key.json` or `judge.json` until `owner.json` is filled (they contain the verdicts you are being calibrated against).", ""]
     key, owner = {}, {}
     for n, (cid, rep_no, rep) in enumerate(take, 1):
         c = cases[cid]
@@ -86,8 +86,7 @@ def judge() -> None:
         c = cases[k["case_id"]]
         answer = results[k["case_id"]]["repeats"][k["repeat"] - 1]["answer"]
         ctx = J.retrieve(c.turns[-1].query).contexts
-        scores = J.deepeval_scores(c.turns[-1].query, answer, ctx, c.expected.behavior + " Must never: " + "; ".join(c.unacceptable), abstain=c.expected.abstain)
-        g = next((s for s in scores if s.metric == "scope_and_honesty"), None)
+        g = J.scope_and_honesty(c.expected.behavior + " Must never: " + "; ".join(c.unacceptable), c.turns[-1].query, answer, ctx)
         out[n] = {"judge": "PASS" if g and g.passed else "FAIL", "score": g.score if g else None, "reason": g.reason if g else ""}
         print(n, out[n]["judge"], out[n]["score"])
     (CAL / "judge.json").write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8")
