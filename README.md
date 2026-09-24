@@ -151,6 +151,41 @@ waiting a day, start the app with `REFUND_GATE_TIMEOUT_SECONDS=10` and send a
 request nobody answers: it ends as `escalated_timeout`. Unit tests (no
 servers): `uv run --group dev python tests/test_refund_gate.py`.
 
+## Evals — the golden dataset (`evals/`)
+
+Every agent behavior we have fixed is now a test case, so a later change cannot silently undo it. `evals/datasets/golden.jsonl`
+is the artifact (**95 cases**, 45% hard, 12 Roman Urdu); the harness, graders and LLM judges are tooling on top. It follows the Agent
+Factory book (Course Nine "Eval-Driven Development", "Trusting the Checker"): failures first, real traffic over imagination, judge
+calibrated against a human, a bar per category written down. Design: `docs/adr/007-golden-dataset-and-evals.md`.
+
+| Layer | What | Needs |
+|---|---|---|
+| Dataset validation | schema, unique inputs, every grounded quote verbatim in `fixtures/kb_snapshot.json`, >=30% hard | nothing (runs in CI) |
+| Deterministic graders | exact strings, routing, URL allowlist, verdict tokens, audit rows, length, latency | nothing for unit/in-process gate; worker + MCP for live |
+| DeepEval + Ragas judges | relevancy, faithfulness, hallucination, scope/honesty GEval; context relevance/recall | `OPENAI_API_KEY` (judge = `gpt-4o`, never the agents' `gpt-4o-mini`) |
+
+```sh
+cd evals && uv sync                                   # its own uv project: the app's uv.lock is untouched
+uv run pytest suites -m "not live"                    # offline: dataset + unit + in-process refund gate (no key, this is CI)
+uv run python scripts/validate_dataset.py -v          # what is still awaiting owner review
+uv run python scripts/mutation_check.py --offline     # break a guard on purpose; the dataset must catch it
+
+# live (worker on :8000, KSOR MCP on :8080, OPENAI_API_KEY, Inngest dev server for the gate flows)
+uv run python scripts/run_live.py --critical          # the smoke set
+uv run python scripts/run_live.py                     # everything, 3 repeats, paced
+uv run python scripts/capture_baseline.py runs/<ts>/results.jsonl --reason "..."   # then check_regressions.py on later runs
+```
+
+Case statuses: `active` (gates), `known_failing` (a documented open bug; reported `UNEXPECTED_PASS` when it starts passing, so it gets
+promoted) and `blocked_until_stable` (the fact lives only in an unpublished draft doc; correct behavior today is to abstain). The bars are in
+`evals/docs/critical-metrics.md`. Verdicts keep infra `ERROR` (5xx, timeouts) apart from behavioral `FAIL`.
+
+**The first run already paid for itself:** it caught that this repo's own refund-gate change (ADR 006) made `RefundSpecialist` decline
+"When will I get my refund?" 6/6 (6/6 answered before the gate). The cause was a prompt addendum, not the tool; removing it fixed it (ADR 007).
+
+Env for the harness: `WORKER_URL`, `EVAL_PACING_SECONDS` (4), `EVAL_TIMEOUT_SECONDS` (90), `EVAL_LATENCY_BUDGET_MS` (180000),
+`EVAL_JUDGE_MODEL` (gpt-4o), `WORKER_AUDIT_DB`, `INNGEST_EVENT_URL`, `EVAL_EXPECT_TIMEOUT_SECONDS` (only for the timeout gate case).
+
 ## Setup
 
 Requires [uv](https://docs.astral.sh/uv/) and Python 3.12.
@@ -266,10 +301,12 @@ src/ksor_worker/
 └── router_agent.py     # run_router_agent() — CLI: complexity-based model routing
 tests/test_health.py    # CI smoke test (FastAPI TestClient, no secrets needed)
 tests/test_refund_gate.py  # gate tool + audit log unit test (no secrets, no Inngest server)
+evals/                    # golden dataset + harness (own uv project) — see "Evals" above
 docs/adr/                # 001: why the OpenAI Agents SDK; 002: why FastAPI;
 │                         # 003: refund memory + the domain-split reliability saga;
 │                         # 004: why eval/policy/router are CLI-only, no new KSOR content
-│                         # 005: triage handoffs; 006: refund approval gate + audit log
+│                         # 005: triage handoffs; 006: refund approval gate + audit log;
+│                         # 007: golden dataset + eval-driven development
 spec.md          # full technical spec
 plan.md          # build phases
 tasks.md         # task tracker

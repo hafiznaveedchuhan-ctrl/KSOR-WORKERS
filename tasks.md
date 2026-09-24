@@ -160,3 +160,26 @@
 | 119 | Verified live via `/triage` (real LLM + KSOR MCP): 6000 PKR → `RefundSpecialist` calls `request_refund`, replies "pending, not issued", no audit row; 1000 PKR → issued directly; approve/reject decision events then produce `refund_issued` / `refund_blocked`; missing amount → asks for it, no row; KSOR question still → `KSORWorker` | done |
 | 120 | Commit + push | pending |
 
+## Golden dataset + eval-driven development (this pass)
+
+| # | Task | Status |
+|---|---|---|
+| 121 | Read the Agent Factory book via the Agent Factory SoR MCP (Course Nine EDD, Trusting the Checker); design decided with the owner: DeepEval + Ragas, draft-only facts as `blocked_until_stable` | done |
+| 122 | Explored both repos: 4 stable affiliate docs served (~40 atomic facts), 3 drafts unpublished, retrieval abstention gate OFF, 25 documented real failures | done |
+| 123 | Dependency risk found and avoided: `deepeval`+`ragas` in the app lock moved `openai` 3.14.1 -> 3.3.0 (measured, reverted); `evals/` is its own uv project; `langchain-community<0.4` pin because `ragas 0.4.3` fails to import otherwise | done |
+| 124 | `evals/datasets`: `schema.py` (the contract), `validate.py` (verbatim quotes vs KB snapshot, uniqueness, >=30% hard), `README.md` (change protocol), `fixtures/kb_snapshot.json` (stable bodies only; drafts = pointer + sha) | done |
+| 125 | `golden.jsonl`: 95 cases — grounded 21, refund_domain 17, abstention 13, triage 11, refund_gate 9, safety 9, roman_urdu 8, multi_turn 7; 43 hard (45%); 14 mined from real widget sessions | done |
+| 126 | Harness: paced serial client (infra ERROR != FAIL), deterministic graders, runner (unit / in-process gate / live Inngest gate / HTTP), `{uid}` placeholders so stale audit rows cannot pass a check | done |
+| 127 | Offline suites (`pytest -m "not live"`, 14 pass) wired into CI; live suite marker `live` | done |
+| 128 | `scripts`: `capture_baseline`, `check_regressions`, `calibrate_judge` (grade-the-grader), `mutation_check`, `build_kb_snapshot`, `run_live`, `validate_dataset` | done |
+| 129 | Mutation check (offline): 4/4 deliberate breakages caught (keywords emptied, threshold off-by-one, gate fails open, no amount validation); control clean | done |
+| 130 | **Regression found by the eval and fixed:** the ADR 006 prompt addendum made RefundSpecialist decline "When will I get my refund?" 6/6 (baseline 6/6 answered). A/B: addendum is the cause, not the tool; fix = remove it (tool-only 4/4 on all four behaviors) | done |
+| 131 | `judge.py`: DeepEval 4.x + Ragas 0.4.3 layer written against verified signatures; judge model != agent model | written, **not yet run against the API** |
+| 132 | ADR 007; README "Evals" section; CLAUDE.md rule 12; `.gitignore` for `evals/runs`, `.deepeval` | done |
+| 133 | Full live run, 3 repeats, all cases | **in progress** (46/82 cases at last look; 13 newer real-traffic cases still to run) |
+| 134 | Record the baseline (`capture_baseline.py`) — will be PROVISIONAL until the owner reviews the cases | pending (needs #133) |
+| 135 | Live mutation check (3 real prompt/handoff regressions, incl. the addendum) | pending |
+| 136 | Owner: review every case (`reviewed_by`), decide `tr-return-window-routing` + `rw-human-approval-question` expectations | **pending — owner** |
+| 137 | Owner: blind-grade the 20-item judge calibration sheet; LLM-judge bars stay advisory until then | **pending — owner** |
+| 138 | Commit + push | done (see progress.md) |
+

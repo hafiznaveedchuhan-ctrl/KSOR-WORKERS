@@ -38,3 +38,10 @@ jobs:
       # timeout flow needs the Inngest dev server (see README, "Human Gate").
       - name: Unit test (refund gate)
         run: uv run --group dev python tests/test_refund_gate.py
+
+      # The eval suite is its own uv project (evals/pyproject.toml) so its dependency pins never touch
+      # the app's lock. Only the offline part runs here: dataset validation (schema, verbatim quotes vs
+      # the KB snapshot, hard-case share) plus deterministic and in-process refund-gate cases. Live
+      # suites need OPENAI_API_KEY and the KSOR MCP server: run them locally (README, "Evals").
+      - name: Golden dataset + offline evals
+        run: cd evals && uv sync --locked && uv run pytest suites -m "not live" -q

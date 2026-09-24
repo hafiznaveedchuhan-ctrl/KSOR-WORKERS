@@ -137,3 +137,10 @@ it's on disk.
        ksor_worker.triage_agent`) — a deliberate exception matching rule
        4.1's precedent for `eval_agent.py`/`policy_agent.py`/
        `router_agent.py`, not a rule-4 violation.
+12. **`evals/` is the regression net — run it before and after touching any agent prompt, tool, handoff or `common.py`.**
+    It is its own uv project (`evals/pyproject.toml`, own lock) so `deepeval`/`ragas` never move the app's pins — do not add them to
+    the root `pyproject.toml`. A fixed bug becomes a case in `evals/datasets/golden.jsonl` with an `origin`; never edit a case's
+    `expected` to make it pass (see `evals/datasets/README.md`). **Do not append instruction text to `RefundSpecialist` without running
+    the routing/refund cases:** a "helpful" submission addendum made it decline "When will I get my refund?" 6/6 (ADR 007). Draft
+    knowledge text must never be copied into `evals/` — this repo is public (`blocked_until_stable` cases carry a pointer, no quote).
+

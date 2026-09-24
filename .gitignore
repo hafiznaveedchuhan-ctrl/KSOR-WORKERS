@@ -16,3 +16,8 @@ wheels/
 *.db
 *.db-shm
 *.db-wal
+
+# Eval runs and DeepEval cache (regenerated; never committed)
+evals/runs/
+evals/.deepeval/
+.deepeval/
